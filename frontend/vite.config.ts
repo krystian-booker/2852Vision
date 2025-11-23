@@ -14,16 +14,7 @@ export default defineConfig({
     port: 8080,
     host: '0.0.0.0', // Bind to all interfaces (IPv4 and IPv6)
     proxy: {
-      // Proxy API calls to backend
-      '^/(api|cameras|calibration|settings|monitoring)/': {
-        target: 'http://localhost:5001',
-        changeOrigin: true,
-      },
-      '/video_feed': {
-        target: 'http://localhost:5001',
-        changeOrigin: true,
-      },
-      '/processed_video_feed': {
+      '/api': {
         target: 'http://localhost:5001',
         changeOrigin: true,
       },

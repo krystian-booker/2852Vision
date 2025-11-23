@@ -65,17 +65,18 @@ CameraThread::~CameraThread() {
     stop();
 }
 
-void CameraThread::start() {
-    if (running_.load()) return;
+bool CameraThread::start() {
+    if (running_.load()) return true;
 
     if (!driver_->connect()) {
         spdlog::error("Failed to connect to camera {}", camera_.id);
-        return;
+        return false;
     }
 
     running_ = true;
     thread_ = std::thread(&CameraThread::run, this);
     spdlog::info("Camera thread started for camera {}", camera_.id);
+    return true;
 }
 
 void CameraThread::stop() {
@@ -106,12 +107,55 @@ FramePtr CameraThread::getDisplayFrame() {
 }
 
 void CameraThread::run() {
+    spdlog::info("Camera thread run loop started for camera {}", camera_.id);
+
+    auto startTime = std::chrono::steady_clock::now();
+    bool firstFrameReceived = false;
+    int emptyFrameCount = 0;
+    int totalFrameCount = 0;
+    static constexpr int INITIAL_FRAME_TIMEOUT_MS = 5000;  // 5 seconds to get first frame
+    static constexpr int LOG_INTERVAL = 100;  // Log every 100 frames
+
     while (running_.load()) {
         auto frameResult = driver_->getFrame();
 
         if (frameResult.empty()) {
+            emptyFrameCount++;
+
+            // Check for initial frame timeout
+            if (!firstFrameReceived) {
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - startTime).count();
+                if (elapsed > INITIAL_FRAME_TIMEOUT_MS) {
+                    spdlog::error("Camera {} failed to produce first frame after {}ms - stopping thread",
+                        camera_.id, elapsed);
+                    running_ = false;
+                    break;
+                }
+                if (emptyFrameCount % 50 == 0) {
+                    spdlog::warn("Camera {} waiting for first frame... ({} empty frames, {}ms elapsed)",
+                        camera_.id, emptyFrameCount, elapsed);
+                }
+            }
+
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
+        }
+
+        // First frame received
+        if (!firstFrameReceived) {
+            firstFrameReceived = true;
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - startTime).count();
+            spdlog::info("Camera {} received first frame after {}ms", camera_.id, elapsed);
+        }
+
+        totalFrameCount++;
+
+        // Periodic logging
+        if (totalFrameCount % LOG_INTERVAL == 0) {
+            spdlog::debug("Camera {} frame count: {}, empty frames: {}",
+                camera_.id, totalFrameCount, emptyFrameCount);
         }
 
         // Apply orientation
@@ -138,6 +182,9 @@ void CameraThread::run() {
             }
         }
     }
+
+    spdlog::info("Camera thread run loop ended for camera {} (total frames: {}, empty: {})",
+        camera_.id, totalFrameCount, emptyFrameCount);
 }
 
 void CameraThread::applyOrientation(cv::Mat& frame) {
@@ -262,7 +309,10 @@ bool ThreadManager::startCamera(const Camera& camera) {
     }
 
     auto thread = std::make_unique<CameraThread>(camera, std::move(driver));
-    thread->start();
+    if (!thread->start()) {
+        spdlog::error("Failed to start camera thread for camera {}", camera.id);
+        return false;
+    }
 
     cameraThreads_.emplace(camera.id, std::move(thread));
     return true;

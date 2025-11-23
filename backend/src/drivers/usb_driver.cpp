@@ -77,8 +77,15 @@ bool USBDriver::connect() {
     }
 
     applySettings();
+
+    // Log actual camera properties after settings
+    int actualWidth = static_cast<int>(capture_.get(cv::CAP_PROP_FRAME_WIDTH));
+    int actualHeight = static_cast<int>(capture_.get(cv::CAP_PROP_FRAME_HEIGHT));
+    int actualFps = static_cast<int>(capture_.get(cv::CAP_PROP_FPS));
+    spdlog::info("USB camera actual settings: {}x{} @ {} fps", actualWidth, actualHeight, actualFps);
+
     connected_ = true;
-    spdlog::info("USB camera connected successfully");
+    spdlog::info("USB camera connected successfully at index {}", deviceIndex);
     return true;
 }
 
@@ -97,12 +104,25 @@ FrameResult USBDriver::getFrame() {
     FrameResult result;
 
     if (!isConnected()) {
+        spdlog::debug("getFrame called but camera not connected");
+        return result;
+    }
+
+    // Use grab() + retrieve() instead of read() for better control
+    // grab() is non-blocking on some backends
+    if (!capture_.grab()) {
+        spdlog::warn("Failed to grab frame from USB camera (camera_id: {})", camera_.id);
         return result;
     }
 
     cv::Mat frame;
-    if (!capture_.read(frame)) {
-        spdlog::warn("Failed to read frame from USB camera");
+    if (!capture_.retrieve(frame)) {
+        spdlog::warn("Failed to retrieve frame from USB camera (camera_id: {})", camera_.id);
+        return result;
+    }
+
+    if (frame.empty()) {
+        spdlog::warn("Retrieved empty frame from USB camera (camera_id: {})", camera_.id);
         return result;
     }
 

@@ -800,50 +800,81 @@ int main(int argc, char** argv) {
                 res.end();
                 return;
             }
-            tm.startCamera(*camera);
+            if (!tm.startCamera(*camera)) {
+                res.code = 500;
+                res.set_header("Content-Type", "application/json");
+                res.write(R"({"error": "Failed to start camera - check connection and device availability"})");
+                res.end();
+                return;
+            }
         }
-
-        res.set_header("Content-Type", "multipart/x-mixed-replace; boundary=frame");
-        res.set_header("Cache-Control", "no-cache");
-        res.set_header("Connection", "close");
 
         // Stream frames with timeout detection
         static constexpr auto FRAME_INTERVAL = std::chrono::milliseconds(33);  // ~30fps
         static constexpr int MAX_EMPTY_FRAMES = 300;  // ~10 seconds at 30fps
-        char headerBuffer[128];
         int emptyFrameCount = 0;
+        int totalFrameCount = 0;
+        bool firstFrameSent = false;
+
+        spdlog::info("Video feed streaming started for camera {}", cameraId);
+
+        // Use chunked response for streaming
+        res.set_header("Content-Type", "multipart/x-mixed-replace; boundary=frame");
+        res.set_header("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.set_header("Pragma", "no-cache");
+        res.set_header("Expires", "0");
+        res.set_header("Connection", "close");
+
+        // Build complete response body with streaming frames
+        std::ostringstream body;
+        char headerBuffer[128];
 
         while (true) {
             auto frame = tm.getCameraFrame(cameraId);
             if (frame && !frame->empty()) {
+                if (!firstFrameSent) {
+                    spdlog::info("Video feed sending first frame for camera {}", cameraId);
+                    firstFrameSent = true;
+                }
                 emptyFrameCount = 0;
+                totalFrameCount++;
                 const auto& jpeg = frame->getJpeg(85);
                 if (!jpeg.empty()) {
-                    // Use snprintf for efficient header building
+                    // Build MJPEG frame
                     int headerLen = snprintf(headerBuffer, sizeof(headerBuffer),
                         "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %zu\r\n\r\n",
                         jpeg.size());
 
-                    // Write frame data - check for write failures indicating client disconnect
+                    std::string frameData;
+                    frameData.reserve(headerLen + jpeg.size() + 2);
+                    frameData.append(headerBuffer, headerLen);
+                    frameData.append(reinterpret_cast<const char*>(jpeg.data()), jpeg.size());
+                    frameData.append("\r\n");
+
+                    // Write and flush immediately
                     try {
-                        res.write(std::string(headerBuffer, headerLen));
-                        res.write(std::string(reinterpret_cast<const char*>(jpeg.data()), jpeg.size()));
-                        res.write("\r\n");
+                        res.write(frameData);
+                        // Force flush by ending and restarting - this is a workaround
+                        // Actually, we need to check if write succeeded
                     } catch (...) {
-                        // Client disconnected
-                        spdlog::debug("Video feed client disconnected for camera {}", cameraId);
+                        spdlog::debug("Video feed client disconnected for camera {} (sent {} frames)", cameraId, totalFrameCount);
                         break;
                     }
                 }
             } else {
                 emptyFrameCount++;
+                if (emptyFrameCount == 1) {
+                    spdlog::debug("Video feed waiting for frames from camera {}", cameraId);
+                }
                 if (emptyFrameCount > MAX_EMPTY_FRAMES) {
-                    spdlog::warn("Video feed timeout - no frames for camera {} after {} attempts", cameraId, MAX_EMPTY_FRAMES);
+                    spdlog::warn("Video feed timeout - no frames for camera {} after {} attempts (sent {} frames total)",
+                        cameraId, MAX_EMPTY_FRAMES, totalFrameCount);
                     break;
                 }
             }
             std::this_thread::sleep_for(FRAME_INTERVAL);
         }
+        spdlog::info("Video feed streaming ended for camera {} (sent {} frames)", cameraId, totalFrameCount);
         res.end();
     });
 
@@ -867,12 +898,29 @@ int main(int argc, char** argv) {
             int cameraId = pipeline->camera_id;
             if (!tm.isCameraRunning(cameraId)) {
                 auto camera = vision::CameraService::instance().getCameraById(cameraId);
-                if (camera) {
-                    tm.startCamera(*camera);
+                if (!camera) {
+                    res.code = 404;
+                    res.set_header("Content-Type", "application/json");
+                    res.write(R"({"error": "Camera not found for pipeline"})");
+                    res.end();
+                    return;
+                }
+                if (!tm.startCamera(*camera)) {
+                    res.code = 500;
+                    res.set_header("Content-Type", "application/json");
+                    res.write(R"({"error": "Failed to start camera - check connection and device availability"})");
+                    res.end();
+                    return;
                 }
             }
 
-            tm.startPipeline(*pipeline, cameraId);
+            if (!tm.startPipeline(*pipeline, cameraId)) {
+                res.code = 500;
+                res.set_header("Content-Type", "application/json");
+                res.write(R"({"error": "Failed to start pipeline"})");
+                res.end();
+                return;
+            }
         }
 
         res.set_header("Content-Type", "multipart/x-mixed-replace; boundary=frame");

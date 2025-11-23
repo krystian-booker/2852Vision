@@ -55,7 +55,7 @@ public:
     CameraThread(CameraThread&&) = delete;
     CameraThread& operator=(CameraThread&&) = delete;
 
-    void start();
+    bool start();
     void stop();
     bool isRunning() const { return running_.load(); }
 

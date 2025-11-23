@@ -226,6 +226,16 @@ export default function Cameras() {
       return
     }
 
+    // Require profile selection for RealSense cameras
+    if (newCameraType === 'RealSense' && !selectedProfile) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Please select a resolution and framerate for RealSense cameras',
+      })
+      return
+    }
+
     setIsLoading(true)
     try {
       // Build camera data as JSON object
@@ -608,7 +618,10 @@ export default function Cameras() {
             {/* Resolution and Framerate Selection */}
             {selectedDevice && availableProfiles.length > 0 && (
               <div className="space-y-2">
-                <Label htmlFor="camera-profile">Resolution & Framerate</Label>
+                <Label htmlFor="camera-profile">
+                  Resolution & Framerate
+                  {newCameraType === 'RealSense' && <span className="text-[var(--color-danger)]"> *</span>}
+                </Label>
                 {isLoadingProfiles ? (
                   <p className="text-sm text-muted">Loading available profiles...</p>
                 ) : (
