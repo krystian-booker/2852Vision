@@ -1,0 +1,41 @@
+#pragma once
+
+#include "drivers/base_driver.hpp"
+#include <opencv2/opencv.hpp>
+#include <string>
+#include <vector>
+
+namespace vision {
+
+class USBDriver : public BaseDriver {
+public:
+    explicit USBDriver(const Camera& camera);
+    ~USBDriver() override;
+
+    bool connect() override;
+    void disconnect() override;
+    bool isConnected() const override;
+    FrameResult getFrame() override;
+
+    void setExposure(ExposureMode mode, int value) override;
+    void setGain(GainMode mode, int value) override;
+    int getExposure() const override;
+    int getGain() const override;
+
+    // Static discovery methods
+    static std::vector<DeviceInfo> listDevices();
+    static std::vector<CameraProfile> getSupportedProfiles(const std::string& identifier);
+
+private:
+    Camera camera_;
+    cv::VideoCapture capture_;
+    bool connected_ = false;
+
+    // Parse identifier to get device index
+    int getDeviceIndex() const;
+
+    // Apply resolution and framerate settings
+    void applySettings();
+};
+
+} // namespace vision

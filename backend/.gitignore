@@ -1,0 +1,13 @@
+# Xmake cache
+.xmake/
+build/
+.claude/
+.vscode/
+
+# Generated files (machine-specific)
+compile_commands.json
+
+# MacOS Cache
+.DS_Store
+
+
