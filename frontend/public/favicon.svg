@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="brandGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:rgb(212, 46, 18);stop-opacity:0.85" />
+      <stop offset="100%" style="stop-color:rgb(0, 194, 168);stop-opacity:0.8" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background with subtle teal -->
+  <rect width="32" height="32" rx="6" fill="rgba(0, 194, 168, 0.1)"/>
+
+  <!-- Subtle teal border -->
+  <rect width="32" height="32" rx="6" fill="none" stroke="rgba(0, 194, 168, 0.2)" stroke-width="1"/>
+
+  <!-- Single brand pip with gradient -->
+  <rect x="10" y="10" width="12" height="12" rx="3" fill="url(#brandGradient)"/>
+</svg>

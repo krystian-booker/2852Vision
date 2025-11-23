@@ -1,0 +1,332 @@
+@import "tailwindcss";
+
+@layer theme {
+  :root {
+    /* Brand colors - Hot Red & Electric Teal */
+    --color-primary: #d42e12;
+    --color-teal: #00c2a8;
+
+    /* Background colors - Deep, near-black greys */
+    --color-bg: #141414;
+    --color-surface: #1c1c1c;
+    --color-surface-alt: #232323;
+    --color-panel: #2e2e2e;
+
+    /* Text colors */
+    --color-text: #f4f5f6;
+    --color-muted: #9ca2a6;
+    --color-subtle: #5c6166;
+    --color-accent: #bfc4ca;
+
+    /* Status colors */
+    --color-success: #2bc48a;
+    --color-warning: #f0b429;
+    --color-danger: #ff5a4f;
+
+    /* Border colors */
+    --color-border: #2c2c2c;
+    --color-border-strong: #3a3a3a;
+
+    /* Typography */
+    --font-sans: "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+
+    /* Letter spacing for technical text */
+    --tracking-technical: 0.08em;
+    --tracking-technical-wide: 0.14em;
+
+    /* Spacing */
+    --spacing-3xs: 2px;
+    --spacing-2xs: 4px;
+    --spacing-xs: 8px;
+    --spacing-sm: 12px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --spacing-xl: 32px;
+    --spacing-2xl: 48px;
+    --spacing-3xl: 64px;
+
+    /* Border radius */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 16px;
+
+    /* Shadows & Glows */
+    --shadow-soft: 0 12px 30px rgba(0, 0, 0, 0.28);
+    --shadow-sharp: 0 0 0 1px rgba(0, 194, 168, 0.2), 0 14px 42px rgba(0, 0, 0, 0.56);
+    --glow-red: 0 0 20px rgba(212, 46, 18, 0.4), 0 0 40px rgba(212, 46, 18, 0.2);
+    --glow-teal: 0 0 0 3px rgba(0, 194, 168, 0.3), 0 0 20px rgba(0, 194, 168, 0.2);
+    --glow-teal-soft: 0 0 12px rgba(0, 194, 168, 0.15);
+
+    /* Gradients */
+    --gradient-red: linear-gradient(180deg, #d42e12 0%, #b82610 100%);
+    --gradient-red-hover: linear-gradient(180deg, #e63516 0%, #d42e12 100%);
+    --gradient-sidebar: linear-gradient(180deg, rgba(28, 28, 28, 0.95) 0%, rgba(20, 20, 20, 0.98) 100%);
+
+    /* Glass panel effects */
+    --glass-bg: rgba(33, 33, 33, 0.9);
+    --glass-bg-heavy: rgba(33, 33, 33, 0.96);
+    --glass-border: rgba(255, 255, 255, 0.05);
+    --glass-border-hover: rgba(255, 255, 255, 0.08);
+
+    /* Ghost button effects */
+    --ghost-border: rgba(255, 255, 255, 0.08);
+    --ghost-hover-bg: rgba(0, 194, 168, 0.14);
+    --ghost-hover-border: rgba(0, 194, 168, 0.3);
+
+    /* Input backgrounds */
+    --input-bg: rgba(36, 36, 36, 0.9);
+    --input-border: rgba(255, 255, 255, 0.06);
+
+    /* Layout */
+    --sidebar-width: 280px;
+    --topbar-height: 64px;
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    /* Base dark color (#141414) with a subtle red radial glow in the top-left */
+    background-color: #141414;
+    background-image: radial-gradient(
+      circle at 20% 20%,
+      rgba(212, 46, 18, 0.12),
+      transparent 45%
+    );
+
+    /* Text settings */
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    margin: 0;
+    line-height: 1.6;
+    color-scheme: dark;
+    min-height: 100vh;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-weight: 600;
+  }
+
+  .brand-mark {
+    display: grid;
+    /* Creates a 3-column grid for the pips */
+    grid-template-columns: repeat(3, 12px);
+    gap: 5px;
+
+    /* Container styling */
+    padding: 8px; /* var(--space-xs) */
+    border-radius: 10px; /* var(--arc-radius-md) */
+    background: rgba(0, 194, 168, 0.1); /* Teal background with low opacity */
+    box-shadow: inset 0 0 0 1px rgba(0, 194, 168, 0.2); /* Subtle teal border */
+  }
+
+  .brand-mark__pip {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+
+    /* Gradient from Red to Teal */
+    background: linear-gradient(
+      135deg,
+      rgba(212, 46, 18, 0.85),
+      rgba(0, 194, 168, 0.8)
+    );
+
+    /* Animation settings */
+    transition: transform 180ms cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+
+  /* Hover Effect: Moves the pips up slightly */
+  .brand-mark:hover .brand-mark__pip {
+    transform: translateY(-2px);
+  }
+}
+
+@layer utilities {
+  /* Background utilities */
+  .bg-bg {
+    background-color: var(--color-bg);
+  }
+
+  .bg-surface {
+    background-color: var(--color-surface);
+  }
+
+  .bg-surface-alt {
+    background-color: var(--color-surface-alt);
+  }
+
+  .bg-panel {
+    background-color: var(--color-panel);
+  }
+
+  /* Text color utilities */
+  .text-text {
+    color: var(--color-text);
+  }
+
+  .text-muted {
+    color: var(--color-muted);
+  }
+
+  .text-subtle {
+    color: var(--color-subtle);
+  }
+
+  .text-primary {
+    color: var(--color-primary);
+  }
+
+  .text-teal {
+    color: var(--color-teal);
+  }
+
+  /* Border utilities */
+  .border-border {
+    border-color: var(--color-border);
+  }
+
+  .border-border-strong {
+    border-color: var(--color-border-strong);
+  }
+
+  /* Technical text styling - uppercase with increased letter spacing */
+  .text-technical {
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-technical);
+    font-weight: 600;
+  }
+
+  .text-technical-wide {
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-technical-wide);
+    font-weight: 600;
+  }
+
+  /* Monospace font for data, metrics, tables, and code */
+  .data-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Glass panel effect - high opacity with subtle borders */
+  .glass-panel {
+    background-color: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(8px);
+  }
+
+  .glass-panel-heavy {
+    background-color: var(--glass-bg-heavy);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(12px);
+  }
+
+  /* Gradient backgrounds */
+  .gradient-red {
+    background: var(--gradient-red);
+  }
+
+  .gradient-sidebar {
+    background: var(--gradient-sidebar);
+  }
+
+  /* Glow effects */
+  .glow-red {
+    box-shadow: var(--glow-red);
+  }
+
+  .glow-teal {
+    box-shadow: var(--glow-teal);
+  }
+
+  .glow-teal-soft {
+    box-shadow: var(--glow-teal-soft);
+  }
+
+  /* Focus glow utility */
+  .focus-glow-teal {
+    outline: none;
+    border-color: var(--color-teal);
+    box-shadow: var(--glow-teal);
+  }
+
+  /* Stack layout utilities - flexbox with gap for vertical rhythm */
+  .stack-xs {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+  }
+
+  .stack-sm {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+  }
+
+  .stack-md {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+  }
+
+  .stack-lg {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+  }
+
+  .stack-xl {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xl);
+  }
+
+  /* Grid layout utilities - dashboard tiles */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--spacing-lg);
+  }
+
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--spacing-lg);
+  }
+
+  .grid-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--spacing-lg);
+  }
+
+  /* Responsive grid utilities */
+  @media (max-width: 1024px) {
+    .grid-3,
+    .grid-4 {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .grid-2,
+    .grid-3,
+    .grid-4 {
+      grid-template-columns: 1fr;
+    }
+  }
+}
