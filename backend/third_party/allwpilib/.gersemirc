@@ -1,4 +1,0 @@
-definitions: [cmake/modules]
-line_length: 100
-list_expansion: favour-inlining
-unsafe: false
