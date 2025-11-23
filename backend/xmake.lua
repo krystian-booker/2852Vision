@@ -62,7 +62,7 @@ option("spinnaker")
 option_end()
 
 add_requires(
-    "crow",
+    "drogon",
     "opencv",
     "onnxruntime 1.17.1",
     "nlohmann_json",
@@ -102,7 +102,7 @@ target("backend")
     add_deps("apriltag")
 
     add_packages(
-        "crow",
+        "drogon",
         "opencv",
         "onnxruntime",
         "nlohmann_json",

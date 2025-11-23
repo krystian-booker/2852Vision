@@ -1,8 +1,12 @@
+// Windows compatibility - must be included before any Drogon headers
+#include "platform/win32_compat.hpp"
+
 #include "routes/calibration.hpp"
 #include "services/camera_service.hpp"
 #include <spdlog/spdlog.h>
 #include <opencv2/aruco.hpp>
 #include <opencv2/aruco/charuco.hpp>
+#include <drogon/utils/Utilities.h>
 
 namespace vision {
 
@@ -97,8 +101,8 @@ nlohmann::json CalibrationService::detectMarkers(const cv::Mat& image,
     std::vector<uchar> buffer;
     cv::imencode(".jpg", annotated, buffer);
     std::string bufferStr(buffer.begin(), buffer.end());
-    result["annotated_image_base64"] = crow::utility::base64encode(
-        bufferStr.data(), bufferStr.size());
+    result["annotated_image_base64"] = drogon::utils::base64Encode(
+        reinterpret_cast<const unsigned char*>(bufferStr.data()), bufferStr.size());
 
     return result;
 }
@@ -161,148 +165,200 @@ nlohmann::json CalibrationService::calibrate(
     return result;
 }
 
-void CalibrationService::registerRoutes(crow::SimpleApp& app) {
+void CalibrationService::registerRoutes(drogon::HttpAppFramework& app) {
+    using namespace drogon;
+
     // GET /api/calibration/board - Generate calibration board
-    CROW_ROUTE(app, "/api/calibration/board")
-    ([](const crow::request& req) {
-        int squaresX = 7;
-        int squaresY = 5;
-        int squareSize = 100;
-        int markerSize = 80;
+    app.registerHandler(
+        "/api/calibration/board",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            int squaresX = 7;
+            int squaresY = 5;
+            int squareSize = 100;
+            int markerSize = 80;
 
-        if (req.url_params.get("squaresX")) {
-            squaresX = std::stoi(req.url_params.get("squaresX"));
-        }
-        if (req.url_params.get("squaresY")) {
-            squaresY = std::stoi(req.url_params.get("squaresY"));
-        }
-        if (req.url_params.get("squareSize")) {
-            squareSize = std::stoi(req.url_params.get("squareSize"));
-        }
-        if (req.url_params.get("markerSize")) {
-            markerSize = std::stoi(req.url_params.get("markerSize"));
-        }
+            std::string param;
+            param = req->getParameter("squaresX");
+            if (!param.empty()) {
+                squaresX = std::stoi(param);
+            }
+            param = req->getParameter("squaresY");
+            if (!param.empty()) {
+                squaresY = std::stoi(param);
+            }
+            param = req->getParameter("squareSize");
+            if (!param.empty()) {
+                squareSize = std::stoi(param);
+            }
+            param = req->getParameter("markerSize");
+            if (!param.empty()) {
+                markerSize = std::stoi(param);
+            }
 
-        cv::Mat board = generateBoard(squaresX, squaresY, squareSize, markerSize);
+            cv::Mat board = generateBoard(squaresX, squaresY, squareSize, markerSize);
 
-        // Encode as PNG
-        std::vector<uchar> buffer;
-        cv::imencode(".png", board, buffer);
+            // Encode as PNG
+            std::vector<uchar> buffer;
+            cv::imencode(".png", board, buffer);
 
-        crow::response res;
-        res.code = 200;
-        res.set_header("Content-Type", "image/png");
-        res.body = std::string(buffer.begin(), buffer.end());
-        return res;
-    });
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setStatusCode(k200OK);
+            resp->setContentTypeString("image/png");
+            resp->setBody(std::string(buffer.begin(), buffer.end()));
+            callback(resp);
+        },
+        {Get});
 
     // POST /api/calibration/detect - Detect markers in image
-    CROW_ROUTE(app, "/api/calibration/detect").methods("POST"_method)
-    ([](const crow::request& req) {
-        try {
-            // Decode base64 image
-            auto body = nlohmann::json::parse(req.body);
-            std::string imageBase64 = body.at("image").get<std::string>();
+    app.registerHandler(
+        "/api/calibration/detect",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            try {
+                // Decode base64 image
+                auto body = nlohmann::json::parse(req->getBody());
+                std::string imageBase64 = body.at("image").get<std::string>();
 
-            // Remove data URL prefix if present
-            size_t commaPos = imageBase64.find(',');
-            if (commaPos != std::string::npos) {
-                imageBase64 = imageBase64.substr(commaPos + 1);
-            }
-
-            std::string imageData = crow::utility::base64decode(imageBase64);
-            std::vector<uchar> imageBytes(imageData.begin(), imageData.end());
-            cv::Mat image = cv::imdecode(imageBytes, cv::IMREAD_COLOR);
-
-            if (image.empty()) {
-                return crow::response(400, "application/json", R"({"error": "Failed to decode image"})");
-            }
-
-            int squaresX = body.value("squaresX", 7);
-            int squaresY = body.value("squaresY", 5);
-
-            auto result = detectMarkers(image, squaresX, squaresY);
-            return crow::response(200, "application/json", result.dump());
-
-        } catch (const std::exception& e) {
-            nlohmann::json error = {{"error", e.what()}};
-            return crow::response(400, "application/json", error.dump());
-        }
-    });
-
-    // POST /api/calibration/calibrate - Perform calibration
-    CROW_ROUTE(app, "/api/calibration/calibrate").methods("POST"_method)
-    ([](const crow::request& req) {
-        try {
-            auto body = nlohmann::json::parse(req.body);
-
-            // Parse calibration data
-            std::vector<std::vector<cv::Point2f>> allCorners;
-            std::vector<std::vector<int>> allIds;
-
-            for (const auto& frame : body["frames"]) {
-                std::vector<cv::Point2f> corners;
-                std::vector<int> ids;
-
-                for (const auto& corner : frame["corners"]) {
-                    corners.push_back(cv::Point2f(
-                        corner["x"].get<float>(),
-                        corner["y"].get<float>()
-                    ));
-                    ids.push_back(corner["id"].get<int>());
+                // Remove data URL prefix if present
+                size_t commaPos = imageBase64.find(',');
+                if (commaPos != std::string::npos) {
+                    imageBase64 = imageBase64.substr(commaPos + 1);
                 }
 
-                allCorners.push_back(corners);
-                allIds.push_back(ids);
+                std::string imageData = drogon::utils::base64Decode(imageBase64);
+                std::vector<uchar> imageBytes(imageData.begin(), imageData.end());
+                cv::Mat image = cv::imdecode(imageBytes, cv::IMREAD_COLOR);
+
+                if (image.empty()) {
+                    auto resp = HttpResponse::newHttpResponse();
+                    resp->setStatusCode(k400BadRequest);
+                    resp->setContentTypeCode(CT_APPLICATION_JSON);
+                    resp->setBody(R"({"error": "Failed to decode image"})");
+                    callback(resp);
+                    return;
+                }
+
+                int squaresX = body.value("squaresX", 7);
+                int squaresY = body.value("squaresY", 5);
+
+                auto result = detectMarkers(image, squaresX, squaresY);
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setStatusCode(k200OK);
+                resp->setContentTypeCode(CT_APPLICATION_JSON);
+                resp->setBody(result.dump());
+                callback(resp);
+
+            } catch (const std::exception& e) {
+                nlohmann::json error = {{"error", e.what()}};
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setStatusCode(k400BadRequest);
+                resp->setContentTypeCode(CT_APPLICATION_JSON);
+                resp->setBody(error.dump());
+                callback(resp);
             }
+        },
+        {Post});
 
-            cv::Size imageSize(
-                body["image_width"].get<int>(),
-                body["image_height"].get<int>()
-            );
+    // POST /api/calibration/calibrate - Perform calibration
+    app.registerHandler(
+        "/api/calibration/calibrate",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            try {
+                auto body = nlohmann::json::parse(req->getBody());
 
-            int squaresX = body.value("squaresX", 7);
-            int squaresY = body.value("squaresY", 5);
-            float squareLength = body.value("square_length", 0.04f);
-            float markerLength = body.value("marker_length", 0.03f);
+                // Parse calibration data
+                std::vector<std::vector<cv::Point2f>> allCorners;
+                std::vector<std::vector<int>> allIds;
 
-            auto result = calibrate(allCorners, allIds, imageSize,
-                                    squaresX, squaresY, squareLength, markerLength);
+                for (const auto& frame : body["frames"]) {
+                    std::vector<cv::Point2f> corners;
+                    std::vector<int> ids;
 
-            return crow::response(200, "application/json", result.dump());
+                    for (const auto& corner : frame["corners"]) {
+                        corners.push_back(cv::Point2f(
+                            corner["x"].get<float>(),
+                            corner["y"].get<float>()
+                        ));
+                        ids.push_back(corner["id"].get<int>());
+                    }
 
-        } catch (const std::exception& e) {
-            nlohmann::json error = {{"error", e.what()}};
-            return crow::response(400, "application/json", error.dump());
-        }
-    });
+                    allCorners.push_back(corners);
+                    allIds.push_back(ids);
+                }
+
+                cv::Size imageSize(
+                    body["image_width"].get<int>(),
+                    body["image_height"].get<int>()
+                );
+
+                int squaresX = body.value("squaresX", 7);
+                int squaresY = body.value("squaresY", 5);
+                float squareLength = body.value("square_length", 0.04f);
+                float markerLength = body.value("marker_length", 0.03f);
+
+                auto result = calibrate(allCorners, allIds, imageSize,
+                                        squaresX, squaresY, squareLength, markerLength);
+
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setStatusCode(k200OK);
+                resp->setContentTypeCode(CT_APPLICATION_JSON);
+                resp->setBody(result.dump());
+                callback(resp);
+
+            } catch (const std::exception& e) {
+                nlohmann::json error = {{"error", e.what()}};
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setStatusCode(k400BadRequest);
+                resp->setContentTypeCode(CT_APPLICATION_JSON);
+                resp->setBody(error.dump());
+                callback(resp);
+            }
+        },
+        {Post});
 
     // POST /api/calibration/save - Save calibration to camera
-    CROW_ROUTE(app, "/api/calibration/save").methods("POST"_method)
-    ([](const crow::request& req) {
-        try {
-            auto body = nlohmann::json::parse(req.body);
+    app.registerHandler(
+        "/api/calibration/save",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            try {
+                auto body = nlohmann::json::parse(req->getBody());
 
-            int cameraId = body.at("camera_id").get<int>();
-            std::string cameraMatrixJson = body["camera_matrix"].dump();
-            std::string distCoeffsJson = body["dist_coeffs"].dump();
-            double reprojectionError = body.at("reprojection_error").get<double>();
+                int cameraId = body.at("camera_id").get<int>();
+                std::string cameraMatrixJson = body["camera_matrix"].dump();
+                std::string distCoeffsJson = body["dist_coeffs"].dump();
+                double reprojectionError = body.at("reprojection_error").get<double>();
 
-            bool success = CameraService::instance().saveCalibration(
-                cameraId, cameraMatrixJson, distCoeffsJson, reprojectionError
-            );
+                bool success = CameraService::instance().saveCalibration(
+                    cameraId, cameraMatrixJson, distCoeffsJson, reprojectionError
+                );
 
-            if (success) {
-                return crow::response(200, "application/json", R"({"success": true})");
-            } else {
-                return crow::response(404, "application/json", R"({"error": "Camera not found"})");
+                if (success) {
+                    auto resp = HttpResponse::newHttpResponse();
+                    resp->setStatusCode(k200OK);
+                    resp->setContentTypeCode(CT_APPLICATION_JSON);
+                    resp->setBody(R"({"success": true})");
+                    callback(resp);
+                } else {
+                    auto resp = HttpResponse::newHttpResponse();
+                    resp->setStatusCode(k404NotFound);
+                    resp->setContentTypeCode(CT_APPLICATION_JSON);
+                    resp->setBody(R"({"error": "Camera not found"})");
+                    callback(resp);
+                }
+
+            } catch (const std::exception& e) {
+                nlohmann::json error = {{"error", e.what()}};
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setStatusCode(k400BadRequest);
+                resp->setContentTypeCode(CT_APPLICATION_JSON);
+                resp->setBody(error.dump());
+                callback(resp);
             }
-
-        } catch (const std::exception& e) {
-            nlohmann::json error = {{"error", e.what()}};
-            return crow::response(400, "application/json", error.dump());
-        }
-    });
+        },
+        {Post});
 
     spdlog::info("Calibration routes registered");
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <crow.h>
+#include <drogon/drogon.h>
 #include <opencv2/opencv.hpp>
 #include <nlohmann/json.hpp>
 #include <vector>
@@ -26,7 +26,7 @@ public:
                                     float squareLength, float markerLength);
 
     // Register calibration routes
-    static void registerRoutes(crow::SimpleApp& app);
+    static void registerRoutes(drogon::HttpAppFramework& app);
 };
 
 } // namespace vision

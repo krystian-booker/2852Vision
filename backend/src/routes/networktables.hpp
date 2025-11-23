@@ -1,13 +1,13 @@
 #pragma once
 
-#include <crow.h>
+#include <drogon/drogon.h>
 
 namespace vision {
 
 class NetworkTablesRoutes {
 public:
     // Register NetworkTables API routes
-    static void registerRoutes(crow::SimpleApp& app);
+    static void registerRoutes(drogon::HttpAppFramework& app);
 };
 
 } // namespace vision
