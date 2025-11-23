@@ -64,7 +64,7 @@ option_end()
 add_requires(
     "drogon",
     "opencv",
-    "onnxruntime 1.17.1",
+    "onnxruntime",
     "nlohmann_json",
     "sqlitecpp",
     "spdlog",
