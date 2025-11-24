@@ -9,13 +9,21 @@ Vision system for real-time camera streaming, processing, and calibration. Simil
 - Camera calibration with distortion correction
 - Web-based dashboard for configuration
 
+## Prerequisites (Ubuntu/Linux)
+
+Before building, ensure you have node 18+, xmake and the necessary system tools and compilers installed.
+
+### System Packages
+Install required packages:
+
+```bash
+sudo apt update
+sudo apt install -y build-essential ninja-build git patch unzip pkg-config libgtk-3-dev libgl1-mesa-dev libglu1-mesa-dev
+```
+
 ## Quick Start
 
-### Requirements
-
-- Node 18+
-
-### Install
+### Install Frontend Dependencies
 ```bash
 npm install
 ```
@@ -24,22 +32,35 @@ npm install
 
 Run the backend and frontend separately in two terminals:
 
-**Terminal 1 - Backend:**
+**Terminal 1 - Backend (C++):**
+This will configure dependencies (Drogon, OpenCV, etc.) and run the server.
 ```bash
+# First time configuration
+xmake f -y
+
+# Build and Run
+xmake run backend
 ```
 
-**Terminal 2 - Frontend:**
+**Terminal 2 - Frontend (React):**
 ```bash
 npm run dev
 ```
 
 - Frontend Dev Server: http://localhost:8080
+- Backend API: http://localhost:5800 (default Drogon port)
 
-Open: http://localhost:8080
+### Production Build
 
-### Production
+**Frontend:**
 ```bash
 npm run build
+```
+
+**Backend:**
+```bash
+xmake f -m release
+xmake
 ```
 
 ### Testing

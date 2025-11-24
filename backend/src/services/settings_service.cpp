@@ -178,8 +178,11 @@ std::vector<SettingsService::FieldLayout> SettingsService::getAvailableFields() 
 
 bool SettingsService::addCustomField(const std::string& name, const std::string& jsonContent) {
     try {
-        // Validate JSON
-        (void)nlohmann::json::parse(jsonContent);
+        // Validate JSON (returns false instead of throwing on invalid input)
+        if (!nlohmann::json::accept(jsonContent)) {
+            spdlog::error("Invalid JSON for field layout: {}", name);
+            return false;
+        }
 
         std::string fieldsDir = getFieldsDirectory();
         // Ensure filename ends with .json

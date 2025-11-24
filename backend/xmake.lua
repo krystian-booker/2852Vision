@@ -61,7 +61,12 @@ option("spinnaker")
     end)
 option_end()
 
+add_requireconfs("trantor", {version = "1.5.24", override = true})
+add_requireconfs("drogon.trantor", {version = "1.5.24", override = true})
+add_requires("opencv 4.12.0", {system = false})
+
 add_requires(
+    "trantor",
     "drogon",
     "opencv",
     "onnxruntime",
@@ -76,6 +81,7 @@ add_requires(
 target("apriltag")
     set_kind("static")
     set_languages("c11")
+    add_defines("_GNU_SOURCE") -- ensure POSIX/GNU extensions (strdup, random, clockid_t, etc.)
 
     -- Add source files (exclude Python wrapper)
     add_files("third_party/apriltag/*.c|apriltag_pywrap.c")
