@@ -4,3 +4,6 @@
 [submodule "backend/third_party/allwpilib"]
 	path = backend/third_party/allwpilib
 	url = https://github.com/wpilibsuite/allwpilib.git
+[submodule "backend/third_party/cpp-mjpeg-streamer"]
+	path = backend/third_party/cpp-mjpeg-streamer
+	url = https://github.com/nadjieb/cpp-mjpeg-streamer.git

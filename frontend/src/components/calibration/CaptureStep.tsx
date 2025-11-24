@@ -49,7 +49,7 @@ export function CaptureStep({
     }, [boardConfig.squareLength]);
 
     // Use the video feed endpoint with the camera's numeric ID
-    const streamUrl = `/api/video_feed/${cameraId}`;
+    const streamUrl = `http://${window.location.hostname}:5805/camera/${cameraId}`;
 
     const handleCapture = async () => {
         if (!imgRef.current || !canvasRef.current) return;

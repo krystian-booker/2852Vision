@@ -327,6 +327,10 @@ std::vector<CameraProfile> USBDriver::getSupportedProfiles(const std::string& id
         }
     }
 
+    // Check if camera is already running to avoid conflict
+    // Note: This requires including thread_manager.hpp which creates a circular dependency
+    // Instead, we'll just try to open and catch failure gracefully
+    
     // Open camera and test profiles
 #ifdef _WIN32
     cv::VideoCapture cap(index, cv::CAP_DSHOW);
@@ -335,7 +339,7 @@ std::vector<CameraProfile> USBDriver::getSupportedProfiles(const std::string& id
 #endif
 
     if (!cap.isOpened()) {
-        spdlog::warn("Could not open camera {} to query profiles", identifier);
+        spdlog::warn("Could not open camera {} to query profiles (might be in use)", identifier);
         // Return default profiles
         profiles.push_back({640, 480, 30});
         profiles.push_back({1280, 720, 30});

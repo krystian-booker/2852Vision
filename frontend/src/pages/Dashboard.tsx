@@ -258,25 +258,26 @@ export default function Dashboard() {
       return
     }
 
+    let connected = false
     // Check camera connection status
     try {
       const status = await api.get<{ connected: boolean }>(`/api/cameras/status/${selectedCameraId}`)
-      setIsCameraConnected(status.connected)
+      connected = status.connected
+      setIsCameraConnected(connected)
     } catch (error) {
       setIsCameraConnected(false)
       return
     }
 
-    if (!isCameraConnected) {
+    if (!connected) {
       setFeedSrc('')
       return
     }
 
-    const cacheBuster = Date.now()
     if (feedType === 'processed' && selectedPipelineId) {
-      setFeedSrc(`/api/processed_video_feed/${selectedPipelineId}?t=${cacheBuster}`)
+      setFeedSrc(`http://${window.location.hostname}:5805/pipeline/${selectedPipelineId}`)
     } else {
-      setFeedSrc(`/api/video_feed/${selectedCameraId}?t=${cacheBuster}`)
+      setFeedSrc(`http://${window.location.hostname}:5805/camera/${selectedCameraId}`)
     }
   }
 

@@ -103,6 +103,7 @@ target("backend")
     add_files("src/**.cpp")
     add_headerfiles("src/**.hpp")
     add_includedirs("src")
+    add_includedirs("third_party/cpp-mjpeg-streamer/include")
 
     -- Link against apriltag static library
     add_deps("apriltag")

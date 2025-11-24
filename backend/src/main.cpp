@@ -12,6 +12,7 @@
 #include "services/camera_service.hpp"
 #include "services/pipeline_service.hpp"
 #include "services/settings_service.hpp"
+#include "services/streamer_service.hpp"
 #include "drivers/usb_driver.hpp"
 #include "drivers/spinnaker_driver.hpp"
 #include "drivers/realsense_driver.hpp"
@@ -37,6 +38,40 @@ int main(int argc, char** argv) {
 
     // Initialize Spinnaker SDK for FLIR camera support
     vision::SpinnakerDriver::initialize();
+
+    // Initialize MJPEG Streamer
+    vision::StreamerService::instance().initialize(5805);
+
+    // Start all configured cameras and pipelines at startup so acquisition/processing is always running
+    {
+        auto cameras = vision::CameraService::instance().getAllCameras();
+        spdlog::info("Startup: found {} cameras in database", cameras.size());
+        for (const auto& cam : cameras) {
+            spdlog::info("Startup: starting camera {} (id={}, identifier={})", cam.name, cam.id, cam.identifier);
+            if (!vision::ThreadManager::instance().startCamera(cam)) {
+                spdlog::warn("Startup: failed to start camera {} ({})", cam.id, cam.name);
+            }
+        }
+
+        auto pipelines = vision::PipelineService::instance().getAllPipelines();
+        spdlog::info("Startup: found {} pipelines in database", pipelines.size());
+        for (const auto& pipeline : pipelines) {
+            // Ensure the owning camera thread exists before starting the pipeline
+            auto camera = vision::CameraService::instance().getCameraById(pipeline.camera_id);
+            if (!camera) {
+                spdlog::warn("Startup: pipeline {} references missing camera {}; skipping start", pipeline.id, pipeline.camera_id);
+                continue;
+            }
+            if (!vision::ThreadManager::instance().isCameraRunning(camera->id)) {
+                spdlog::info("Startup: camera {} not running when starting pipeline {}; starting camera", camera->id, pipeline.id);
+                vision::ThreadManager::instance().startCamera(*camera);
+            }
+            spdlog::info("Startup: starting pipeline {} for camera {}", pipeline.id, pipeline.camera_id);
+            if (!vision::ThreadManager::instance().startPipeline(pipeline, pipeline.camera_id)) {
+                spdlog::warn("Startup: failed to start pipeline {} for camera {}", pipeline.id, pipeline.camera_id);
+            }
+        }
+    }
 
     // ============== Camera Routes ==============
 
@@ -172,6 +207,18 @@ int main(int argc, char** argv) {
                 }
 
                 auto created = vision::CameraService::instance().createCamera(camera);
+
+                // Create a default pipeline (AprilTag) for the new camera
+                vision::Pipeline defaultPipeline;
+                defaultPipeline.name = "Default AprilTag";
+                defaultPipeline.pipeline_type = vision::PipelineType::AprilTag;
+                defaultPipeline.camera_id = created.id;
+                auto createdPipeline = vision::PipelineService::instance().createPipeline(defaultPipeline);
+
+                // Start camera and default pipeline threads so processing is active immediately
+                vision::ThreadManager::instance().startCamera(created);
+                vision::ThreadManager::instance().startPipeline(createdPipeline, created.id);
+
                 auto resp = HttpResponse::newHttpResponse();
                 resp->setStatusCode(k201Created);
                 resp->setContentTypeCode(CT_APPLICATION_JSON);
@@ -248,6 +295,16 @@ int main(int argc, char** argv) {
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback,
            int id) {
+            // Stop pipelines for this camera and remove them from the database
+            auto pipelines = vision::PipelineService::instance().getPipelinesForCamera(id);
+            for (const auto& pipeline : pipelines) {
+                vision::ThreadManager::instance().stopPipeline(pipeline.id);
+                vision::PipelineService::instance().deletePipeline(pipeline.id);
+            }
+
+            // Stop camera thread
+            vision::ThreadManager::instance().stopCamera(id);
+
             if (vision::CameraService::instance().deleteCamera(id)) {
                 auto resp = HttpResponse::newHttpResponse();
                 resp->setStatusCode(k200OK);
@@ -750,6 +807,18 @@ int main(int argc, char** argv) {
                 }
 
                 auto created = vision::PipelineService::instance().createPipeline(pipeline);
+
+                // Ensure owning camera thread is running and start this pipeline thread immediately
+                auto camera = vision::CameraService::instance().getCameraById(cameraId);
+                if (camera) {
+                    if (!vision::ThreadManager::instance().isCameraRunning(cameraId)) {
+                        vision::ThreadManager::instance().startCamera(*camera);
+                    }
+                    vision::ThreadManager::instance().startPipeline(created, cameraId);
+                } else {
+                    spdlog::warn("Created pipeline {} for missing camera {}", created.id, cameraId);
+                }
+
                 auto resp = HttpResponse::newHttpResponse();
                 resp->setStatusCode(k201Created);
                 resp->setContentTypeCode(CT_APPLICATION_JSON);
@@ -852,6 +921,9 @@ int main(int argc, char** argv) {
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback,
            int id) {
+            // Stop processing thread first
+            vision::ThreadManager::instance().stopPipeline(id);
+
             if (vision::PipelineService::instance().deletePipeline(id)) {
                 auto resp = HttpResponse::newHttpResponse();
                 resp->setStatusCode(k200OK);
@@ -1204,200 +1276,6 @@ int main(int argc, char** argv) {
         },
         {Get});
 
-    // ============== Video Streaming ==============
-
-    // GET /api/video_feed/{cameraId} - Raw camera MJPEG stream
-    app().registerHandler(
-        "/api/video_feed/{cameraId}",
-        [](const HttpRequestPtr& req,
-           std::function<void(const HttpResponsePtr&)>&& callback,
-           int cameraId) {
-            auto& tm = vision::ThreadManager::instance();
-
-            // Start camera if not running
-            if (!tm.isCameraRunning(cameraId)) {
-                auto camera = vision::CameraService::instance().getCameraById(cameraId);
-                if (!camera) {
-                    auto resp = HttpResponse::newHttpResponse();
-                    resp->setStatusCode(k404NotFound);
-                    resp->setContentTypeCode(CT_APPLICATION_JSON);
-                    resp->setBody(R"({"error": "Camera not found"})");
-                    callback(resp);
-                    return;
-                }
-                if (!tm.startCamera(*camera)) {
-                    auto resp = HttpResponse::newHttpResponse();
-                    resp->setStatusCode(k500InternalServerError);
-                    resp->setContentTypeCode(CT_APPLICATION_JSON);
-                    resp->setBody(R"({"error": "Failed to start camera - check connection and device availability"})");
-                    callback(resp);
-                    return;
-                }
-            }
-
-            spdlog::info("Video feed streaming started for camera {}", cameraId);
-
-            // Create streaming response using Drogon's async streaming
-            auto resp = HttpResponse::newAsyncStreamResponse(
-                [cameraId, &tm](ResponseStreamPtr stream) {
-                    static constexpr auto FRAME_INTERVAL = std::chrono::milliseconds(33);
-                    static constexpr int MAX_EMPTY_FRAMES = 300;
-                    int emptyFrameCount = 0;
-                    int totalFrameCount = 0;
-                    bool firstFrameSent = false;
-                    char headerBuffer[128];
-
-                    while (true) {
-                        auto frame = tm.getCameraFrame(cameraId);
-                        if (frame && !frame->empty()) {
-                            if (!firstFrameSent) {
-                                spdlog::info("Video feed sending first frame for camera {}", cameraId);
-                                firstFrameSent = true;
-                            }
-                            emptyFrameCount = 0;
-                            totalFrameCount++;
-                            const auto& jpeg = frame->getJpeg(85);
-                            if (!jpeg.empty()) {
-                                int headerLen = snprintf(headerBuffer, sizeof(headerBuffer),
-                                    "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %zu\r\n\r\n",
-                                    jpeg.size());
-
-                                std::string frameData;
-                                frameData.reserve(headerLen + jpeg.size() + 2);
-                                frameData.append(headerBuffer, headerLen);
-                                frameData.append(reinterpret_cast<const char*>(jpeg.data()), jpeg.size());
-                                frameData.append("\r\n");
-
-                                if (!stream->send(frameData)) {
-                                    spdlog::debug("Video feed client disconnected for camera {} (sent {} frames)", cameraId, totalFrameCount);
-                                    break;
-                                }
-                            }
-                        } else {
-                            emptyFrameCount++;
-                            if (emptyFrameCount == 1) {
-                                spdlog::debug("Video feed waiting for frames from camera {}", cameraId);
-                            }
-                            if (emptyFrameCount > MAX_EMPTY_FRAMES) {
-                                spdlog::warn("Video feed timeout - no frames for camera {} after {} attempts (sent {} frames total)",
-                                    cameraId, MAX_EMPTY_FRAMES, totalFrameCount);
-                                break;
-                            }
-                        }
-                        std::this_thread::sleep_for(FRAME_INTERVAL);
-                    }
-                    spdlog::info("Video feed streaming ended for camera {} (sent {} frames)", cameraId, totalFrameCount);
-                    stream->close();
-                });
-
-            resp->setContentTypeString("multipart/x-mixed-replace; boundary=frame");
-            resp->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-            resp->addHeader("Pragma", "no-cache");
-            resp->addHeader("Expires", "0");
-            resp->addHeader("Connection", "close");
-            callback(resp);
-        },
-        {Get});
-
-    // GET /api/processed_video_feed/{pipelineId} - Processed pipeline MJPEG stream
-    app().registerHandler(
-        "/api/processed_video_feed/{pipelineId}",
-        [](const HttpRequestPtr& req,
-           std::function<void(const HttpResponsePtr&)>&& callback,
-           int pipelineId) {
-            auto& tm = vision::ThreadManager::instance();
-
-            // Start pipeline if not running
-            if (!tm.isPipelineRunning(pipelineId)) {
-                auto pipeline = vision::PipelineService::instance().getPipelineById(pipelineId);
-                if (!pipeline) {
-                    auto resp = HttpResponse::newHttpResponse();
-                    resp->setStatusCode(k404NotFound);
-                    resp->setContentTypeCode(CT_APPLICATION_JSON);
-                    resp->setBody(R"({"error": "Pipeline not found"})");
-                    callback(resp);
-                    return;
-                }
-
-                // Ensure camera is running
-                int cameraId = pipeline->camera_id;
-                if (!tm.isCameraRunning(cameraId)) {
-                    auto camera = vision::CameraService::instance().getCameraById(cameraId);
-                    if (!camera) {
-                        auto resp = HttpResponse::newHttpResponse();
-                        resp->setStatusCode(k404NotFound);
-                        resp->setContentTypeCode(CT_APPLICATION_JSON);
-                        resp->setBody(R"({"error": "Camera not found for pipeline"})");
-                        callback(resp);
-                        return;
-                    }
-                    if (!tm.startCamera(*camera)) {
-                        auto resp = HttpResponse::newHttpResponse();
-                        resp->setStatusCode(k500InternalServerError);
-                        resp->setContentTypeCode(CT_APPLICATION_JSON);
-                        resp->setBody(R"({"error": "Failed to start camera - check connection and device availability"})");
-                        callback(resp);
-                        return;
-                    }
-                }
-
-                if (!tm.startPipeline(*pipeline, cameraId)) {
-                    auto resp = HttpResponse::newHttpResponse();
-                    resp->setStatusCode(k500InternalServerError);
-                    resp->setContentTypeCode(CT_APPLICATION_JSON);
-                    resp->setBody(R"({"error": "Failed to start pipeline"})");
-                    callback(resp);
-                    return;
-                }
-            }
-
-            // Create streaming response
-            auto resp = HttpResponse::newAsyncStreamResponse(
-                [pipelineId, &tm](ResponseStreamPtr stream) {
-                    static constexpr auto FRAME_INTERVAL = std::chrono::milliseconds(33);
-                    static constexpr int MAX_EMPTY_FRAMES = 300;
-                    char headerBuffer[128];
-                    int emptyFrameCount = 0;
-
-                    while (true) {
-                        auto frame = tm.getPipelineFrame(pipelineId);
-                        if (frame && !frame->empty()) {
-                            emptyFrameCount = 0;
-                            const auto& jpeg = frame->getJpeg(75);
-                            if (!jpeg.empty()) {
-                                int headerLen = snprintf(headerBuffer, sizeof(headerBuffer),
-                                    "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %zu\r\n\r\n",
-                                    jpeg.size());
-
-                                std::string frameData;
-                                frameData.reserve(headerLen + jpeg.size() + 2);
-                                frameData.append(headerBuffer, headerLen);
-                                frameData.append(reinterpret_cast<const char*>(jpeg.data()), jpeg.size());
-                                frameData.append("\r\n");
-
-                                if (!stream->send(frameData)) {
-                                    spdlog::debug("Processed video feed client disconnected for pipeline {}", pipelineId);
-                                    break;
-                                }
-                            }
-                        } else {
-                            emptyFrameCount++;
-                            if (emptyFrameCount > MAX_EMPTY_FRAMES) {
-                                spdlog::warn("Processed video feed timeout - no frames for pipeline {} after {} attempts", pipelineId, MAX_EMPTY_FRAMES);
-                                break;
-                            }
-                        }
-                        std::this_thread::sleep_for(FRAME_INTERVAL);
-                    }
-                    stream->close();
-                });
-
-            resp->setContentTypeString("multipart/x-mixed-replace; boundary=frame");
-            resp->addHeader("Cache-Control", "no-cache");
-            resp->addHeader("Connection", "close");
-            callback(resp);
-        },
-        {Get});
 
     // GET /api/cameras/results/{id} - Get pipeline results for camera
     app().registerHandler(
@@ -1449,6 +1327,8 @@ int main(int argc, char** argv) {
                     if (vision::RealSenseDriver::isAvailable()) {
                         devices = vision::RealSenseDriver::listDevices();
                     }
+                    break;
+                default:
                     break;
             }
 

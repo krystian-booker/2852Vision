@@ -44,6 +44,13 @@ namespace {
     }
 
     std::string getDefaultDataDirectory() {
+#ifdef _WIN32
+        char path[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, path))) {
+            std::filesystem::path appDataPath(path);
+            return (appDataPath / "2852Vision").string();
+        }
+#endif
         // Always use local data directory relative to executable
         return "./data";
     }

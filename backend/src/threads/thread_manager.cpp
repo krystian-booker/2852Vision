@@ -1,5 +1,6 @@
 #include "threads/thread_manager.hpp"
 #include "services/pipeline_service.hpp"
+#include "services/streamer_service.hpp"
 #include <spdlog/spdlog.h>
 
 namespace vision {
@@ -68,9 +69,11 @@ CameraThread::~CameraThread() {
 bool CameraThread::start() {
     if (running_.load()) return true;
 
+    // Don't fail if connect fails here - let the run loop handle retries
     if (!driver_->connect()) {
-        spdlog::error("Failed to connect to camera {}", camera_.id);
-        return false;
+        spdlog::warn("Initial connection to camera {} failed - will retry in run loop", camera_.id);
+    } else {
+        spdlog::info("Initial connection to camera {} successful", camera_.id);
     }
 
     running_ = true;
@@ -117,6 +120,27 @@ void CameraThread::run() {
     static constexpr int LOG_INTERVAL = 100;  // Log every 100 frames
 
     while (running_.load()) {
+        // Try to connect if not connected
+        if (!driver_->isConnected()) {
+             if (driver_->connect()) {
+                 spdlog::info("Connected to camera {}", camera_.id);
+             } else {
+                 // Publish placeholder while connecting
+                 if (totalFrameCount % 10 == 0) { // Limit frequency
+                     cv::Mat placeholder = cv::Mat::zeros(480, 640, CV_8UC3);
+                     cv::putText(placeholder, "Camera Connecting...", cv::Point(160, 240), 
+                         cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 255), 2);
+                     StreamerService::instance().publishFrame(
+                         "/camera/" + std::to_string(camera_.id),
+                         placeholder
+                     );
+                 }
+                 std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                 totalFrameCount++; // Increment to trigger placeholder logic
+                 continue;
+             }
+        }
+
         auto frameResult = driver_->getFrame();
 
         if (frameResult.empty()) {
@@ -126,15 +150,20 @@ void CameraThread::run() {
             if (!firstFrameReceived) {
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - startTime).count();
-                if (elapsed > INITIAL_FRAME_TIMEOUT_MS) {
-                    spdlog::error("Camera {} failed to produce first frame after {}ms - stopping thread",
-                        camera_.id, elapsed);
-                    running_ = false;
-                    break;
-                }
-                if (emptyFrameCount % 50 == 0) {
+                
+                // Instead of stopping, just log and publish a placeholder every second
+                if (elapsed > INITIAL_FRAME_TIMEOUT_MS && emptyFrameCount % 100 == 0) {
                     spdlog::warn("Camera {} waiting for first frame... ({} empty frames, {}ms elapsed)",
                         camera_.id, emptyFrameCount, elapsed);
+                    
+                    // Publish placeholder to keep stream alive
+                    cv::Mat placeholder = cv::Mat::zeros(480, 640, CV_8UC3);
+                    cv::putText(placeholder, "Waiting for frames...", cv::Point(160, 240), 
+                        cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 255), 2);
+                    StreamerService::instance().publishFrame(
+                        "/camera/" + std::to_string(camera_.id),
+                        placeholder
+                    );
                 }
             }
 
@@ -173,6 +202,12 @@ void CameraThread::run() {
             std::lock_guard<std::mutex> lock(displayMutex_);
             displayFrame_ = frame;
         }
+
+        // Publish to MJPEG streamer
+        StreamerService::instance().publishFrame(
+            "/camera/" + std::to_string(camera_.id),
+            frame->color()
+        );
 
         // Distribute to vision threads
         {
@@ -253,6 +288,19 @@ void VisionThread::run() {
     while (running_.load()) {
         QueuedFrame qf;
         if (!inputQueue_->pop(qf, std::chrono::milliseconds(100))) {
+            // Timeout - publish placeholder to keep stream alive
+            static auto lastPlaceholderTime = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastPlaceholderTime).count() > 1000) {
+                cv::Mat placeholder = cv::Mat::zeros(480, 640, CV_8UC3);
+                cv::putText(placeholder, "Waiting for input...", cv::Point(160, 240), 
+                    cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 0, 255), 2);
+                StreamerService::instance().publishFrame(
+                    "/pipeline/" + std::to_string(pipeline_.id),
+                    placeholder
+                );
+                lastPlaceholderTime = now;
+            }
             continue;
         }
 
@@ -272,6 +320,12 @@ void VisionThread::run() {
             std::lock_guard<std::mutex> lock(frameMutex_);
             processedFrame_ = outputFrame;
         }
+
+        // Publish to MJPEG streamer
+        StreamerService::instance().publishFrame(
+            "/pipeline/" + std::to_string(pipeline_.id),
+            outputFrame->color()
+        );
 
         // Update results
         {
@@ -315,6 +369,10 @@ bool ThreadManager::startCamera(const Camera& camera) {
     }
 
     cameraThreads_.emplace(camera.id, std::move(thread));
+    
+    // Register stream path immediately so it doesn't 404 even if camera is slow/broken
+    StreamerService::instance().registerPath("/camera/" + std::to_string(camera.id));
+    
     return true;
 }
 
@@ -366,6 +424,9 @@ bool ThreadManager::startPipeline(const Pipeline& pipeline, int cameraId) {
     pipelineQueues_.emplace(pipeline.id, queue);
     pipelineToCameraMap_.emplace(pipeline.id, cameraId);
     visionThreads_.emplace(pipeline.id, std::move(thread));
+
+    // Register stream path immediately
+    StreamerService::instance().registerPath("/pipeline/" + std::to_string(pipeline.id));
 
     return true;
 }
