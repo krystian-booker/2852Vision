@@ -1,9 +1,11 @@
 #pragma once
 
 #include "drivers/base_driver.hpp"
+#include <openpnp-capture.h>
 #include <opencv2/opencv.hpp>
 #include <string>
 #include <vector>
+#include <cstdint>
 
 namespace vision {
 
@@ -28,14 +30,26 @@ public:
 
 private:
     Camera camera_;
-    cv::VideoCapture capture_;
+
+    // openpnp-capture handles
+    CapContext ctx_ = nullptr;
+    CapStream stream_ = -1;
+    CapDeviceID deviceId_ = 0;
+    CapFormatID formatId_ = 0;
+
+    // Frame buffer
+    std::vector<uint8_t> frameBuffer_;
+    int frameWidth_ = 0;
+    int frameHeight_ = 0;
+
     bool connected_ = false;
 
-    // Parse identifier to get device index
-    int getDeviceIndex() const;
+    // Helper methods
+    CapDeviceID findDeviceId() const;
+    CapFormatID findBestFormat() const;
 
-    // Apply resolution and framerate settings
-    void applySettings();
+    // Static helper to find device by identifier
+    static CapDeviceID findDeviceByIdentifier(CapContext ctx, const std::string& identifier);
 };
 
 } // namespace vision

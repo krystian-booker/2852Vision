@@ -225,6 +225,97 @@ Please ensure the allwpilib submodule is properly initialized.
             target:add("linkdirs", path.join(allwpilib_build_dir, "lib"))
             target:add("links", "ntcore", "wpinet", "wpiutil", "pthread", "dl")
         end
+
+        -- =======================================================================
+        -- Build openpnp-capture static library (per configuration)
+        -- =======================================================================
+        local openpnp_dir = path.join(backend_dir, "third_party", "openpnp-capture")
+        local openpnp_build_dir = path.join(openpnp_dir, "build-xmake")
+
+        if not os.isdir(openpnp_dir) then
+            raise([[
+[ERROR] openpnp-capture submodule not found!
+
+Expected location: ]] .. openpnp_dir .. [[
+
+Please initialize the git submodule:
+    git submodule update --init --recursive third_party/openpnp-capture
+]])
+        end
+
+        -- Configure openpnp-capture with CMake (only once)
+        if not os.isdir(openpnp_build_dir) then
+            print("Configuring openpnp-capture...")
+            os.mkdir(openpnp_build_dir)
+
+            local cmake_args = {
+                "-S", openpnp_dir,
+                "-B", openpnp_build_dir,
+                "-DBUILD_STATIC_LIBS=ON",
+                "-DBUILD_SHARED_LIBS=OFF",
+                "-DLINK_DYNAMIC_MSVC_RUNTIME=ON",
+                "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+            }
+
+            if is_plat("windows") then
+                table.insert(cmake_args, "-G")
+                table.insert(cmake_args, "Visual Studio 17 2022")
+                table.insert(cmake_args, "-A")
+                table.insert(cmake_args, "x64")
+            end
+
+            local ok = os.execv("cmake", cmake_args)
+            if ok ~= 0 then
+                raise("Failed to configure openpnp-capture")
+            end
+        end
+
+        -- Ensure openpnp-capture is built for the current configuration
+        local cmake_config = is_mode("debug") and "Debug" or "Release"
+
+        if is_plat("windows") then
+            local openpnp_libdir = path.join(openpnp_build_dir, cmake_config)
+            local openpnp_lib = path.join(openpnp_libdir, "openpnp-capture.lib")
+
+            if not os.isfile(openpnp_lib) then
+                print("Building openpnp-capture (" .. cmake_config .. ")...")
+                local ok = os.execv("cmake", {
+                    "--build", openpnp_build_dir,
+                    "--config", cmake_config,
+                    "--parallel"
+                })
+                if ok ~= 0 then
+                    raise("Failed to build openpnp-capture (" .. cmake_config .. ")")
+                end
+                print("openpnp-capture built successfully (" .. cmake_config .. ")")
+            end
+
+            -- Add openpnp-capture includes and link (per-config libdir)
+            target:add("includedirs", path.join(openpnp_dir, "include"))
+            target:add("defines", "OPENPNPCAPTURE_STATIC")
+            target:add("linkdirs", openpnp_libdir)
+            target:add("links", "openpnp-capture")
+            target:add("syslinks", "strmiids")
+        else
+            -- Single-config generators (Linux/macOS etc.)
+            local openpnp_lib = path.join(openpnp_build_dir, "libopenpnp-capture.a")
+            if not os.isfile(openpnp_lib) then
+                print("Building openpnp-capture...")
+                local ok = os.execv("cmake", {
+                    "--build", openpnp_build_dir,
+                    "--parallel"
+                })
+                if ok ~= 0 then
+                    raise("Failed to build openpnp-capture")
+                end
+                print("openpnp-capture built successfully")
+            end
+
+            target:add("includedirs", path.join(openpnp_dir, "include"))
+            target:add("defines", "OPENPNPCAPTURE_STATIC")
+            target:add("linkdirs", openpnp_build_dir)
+            target:add("links", "openpnp-capture")
+        end
     end)
 
     -- Copy DLLs to output directory after build (Windows only)
