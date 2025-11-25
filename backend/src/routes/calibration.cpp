@@ -4,8 +4,9 @@
 #include "routes/calibration.hpp"
 #include "services/camera_service.hpp"
 #include <spdlog/spdlog.h>
-#include <opencv2/aruco.hpp>
-#include <opencv2/aruco/charuco.hpp>
+#include <opencv2/objdetect/aruco_detector.hpp>
+#include <opencv2/objdetect/charuco_detector.hpp>
+#include <opencv2/objdetect/aruco_dictionary.hpp>
 #include <drogon/utils/Utilities.h>
 
 namespace vision {
@@ -40,19 +41,6 @@ nlohmann::json CalibrationService::detectMarkers(const cv::Mat& image,
 
     // Get ArUco dictionary and create detector
     cv::aruco::Dictionary dict = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
-    cv::aruco::DetectorParameters detectorParams;
-    cv::aruco::ArucoDetector detector(dict, detectorParams);
-
-    // Detect markers
-    std::vector<int> markerIds;
-    std::vector<std::vector<cv::Point2f>> markerCorners;
-    detector.detectMarkers(image, markerCorners, markerIds);
-
-    if (markerIds.empty()) {
-        result["error"] = "No markers detected";
-        return result;
-    }
-
     // Create CharucoBoard
     cv::aruco::CharucoBoard board(
         cv::Size(squaresX, squaresY),
@@ -61,13 +49,23 @@ nlohmann::json CalibrationService::detectMarkers(const cv::Mat& image,
         dict
     );
 
-    // Interpolate Charuco corners
+    // Create CharucoDetector
+    cv::aruco::CharucoParameters charucoParams;
+    cv::aruco::DetectorParameters detectorParams;
+    cv::aruco::CharucoDetector detector(board, charucoParams, detectorParams);
+
+    // Detect markers and Charuco corners
+    std::vector<int> markerIds;
+    std::vector<std::vector<cv::Point2f>> markerCorners;
     std::vector<cv::Point2f> charucoCorners;
     std::vector<int> charucoIds;
-    cv::aruco::interpolateCornersCharuco(
-        markerCorners, markerIds, image, &board,
-        charucoCorners, charucoIds
-    );
+
+    detector.detectBoard(image, charucoCorners, charucoIds, markerCorners, markerIds);
+
+    if (markerIds.empty()) {
+        result["error"] = "No markers detected";
+        return result;
+    }
 
     if (charucoCorners.empty()) {
         result["error"] = "Could not interpolate Charuco corners";
@@ -131,12 +129,32 @@ nlohmann::json CalibrationService::calibrate(
         dict
     );
 
+    // Collect object points and image points
+    std::vector<std::vector<cv::Point3f>> allObjPoints;
+    std::vector<std::vector<cv::Point2f>> allImgPoints;
+
+    for (size_t i = 0; i < allCorners.size(); i++) {
+        std::vector<cv::Point3f> objPoints;
+        std::vector<cv::Point2f> imgPoints;
+        board.matchImagePoints(allCorners[i], allIds[i], objPoints, imgPoints);
+        
+        if (!objPoints.empty()) {
+            allObjPoints.push_back(objPoints);
+            allImgPoints.push_back(imgPoints);
+        }
+    }
+
+    if (allObjPoints.empty()) {
+        result["error"] = "Not enough valid frames for calibration";
+        return result;
+    }
+
     // Calibrate camera
     cv::Mat cameraMatrix, distCoeffs;
     std::vector<cv::Mat> rvecs, tvecs;
 
-    double reprojectionError = cv::aruco::calibrateCameraCharuco(
-        allCorners, allIds, &board, imageSize,
+    double reprojectionError = cv::calibrateCamera(
+        allObjPoints, allImgPoints, imageSize,
         cameraMatrix, distCoeffs, rvecs, tvecs
     );
 

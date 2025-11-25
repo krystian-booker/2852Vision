@@ -4,63 +4,42 @@ C++ backend for FRC robot vision processing with AprilTag detection, pose estima
 
 ## Prerequisites
 
-- **xmake** - Build system ([install](https://xmake.io/#/guide/installation))
-- **Visual Studio 2022** - C++ build tools (Windows)
-- **CMake** - For building dependencies (auto-built by xmake)
+- **CMake** (3.24+)
+- **Conan** (2.0+)
+- **Visual Studio 2022** (Windows) or GCC/Clang (Linux)
 - **C++20** compiler support
 
 ## Quick Start
 
-```bash
-# Initialize submodules
-git submodule update --init --recursive
+### 1. Install Dependencies
 
-# Build (dependencies are built automatically if needed)
+```bash
 cd backend
-xmake f -p windows -a x64
-xmake
+# Install Release dependencies
+conan install . --output-folder=build --build=missing -s compiler.cppstd=20
+
+# Install Debug dependencies (Required for Visual Studio)
+conan install . --output-folder=build --build=missing -s compiler.cppstd=20 -s build_type=Debug
 ```
 
-On first build, xmake will automatically build:
-- **allwpilib** (NetworkTables support)
-
-This may take several minutes on the first run.
-
-## Build Options
-
-### View All Options
+### 2. Build
 
 ```bash
-xmake f --help
+# Configure
+cmake --preset conan-default
+
+# Build
+cmake --build --preset conan-release
 ```
 
-### Build Configurations
+## Running
 
 ```bash
-# Debug build (default)
-xmake f -m debug
-xmake
-
-# Release build
-xmake f -m release
-xmake
+# Run the built executable
+./build/build/Release/backend.exe
 ```
 
-## Optional Features
-
-### Intel RealSense
-
-For depth camera support with Intel RealSense cameras (D415, D435, D455, etc.)
-
-**Step 1: Install SDK**: Download and install [Intel RealSense SDK 2.0](https://github.com/IntelRealSense/librealsense/releases)
-
-Default installation path: `C:/Program Files (x86)/Intel RealSense SDK 2.0/`
-
-**Step 2: Enable in xmake**:
-```bash
-xmake f --realsense=y -p windows -a x64
-xmake
-```
+The server starts on `http://localhost:5800` by default.
 
 ## Project Structure
 
@@ -76,9 +55,10 @@ backend/
 │   ├── utils/          # Geometry utilities
 │   └── vision/         # Field layout, coordinate systems
 ├── third_party/
-│   ├── apriltag/       # AprilTag3 library (built from source by xmake)
-│   └── allwpilib/      # WPILib (git submodule, auto-built)
-└── xmake.lua           # Build configuration
+│   ├── apriltag/       # AprilTag3 library
+│   └── allwpilib/      # WPILib
+├── CMakeLists.txt      # Main CMake configuration
+└── conanfile.txt       # Conan dependency definitions
 ```
 
 ## API Endpoints
@@ -101,49 +81,6 @@ backend/
 
 ## VS Code Setup
 
-For IntelliSense and code navigation, generate `compile_commands.json`:
-
-```bash
-xmake project -k compile_commands
-```
-
-Then configure VS Code's C/C++ extension to use it. Create/update `.vscode/c_cpp_properties.json`:
-
-```json
-{
-    "configurations": [
-        {
-            "name": "Win32",
-            "compileCommands": "${workspaceFolder}/compile_commands.json"
-        }
-    ],
-    "version": 4
-}
-```
-
-**Note**: `compile_commands.json` is machine-specific and should not be committed to git. Each developer generates their own.
-
-## Running
-
-```bash
-# Run the built executable
-xmake run
-
-# Or directly
-./build/windows/x64/debug/backend.exe
-```
-
-The server starts on `http://localhost:5800` by default.
-
-## Rebuilding Dependencies
-
-If you need to rebuild the third-party dependencies:
-
-```bash
-# Clean allwpilib build
-rm -rf third_party/allwpilib/build-cmake
-
-# Rebuild
-xmake f -c
-xmake
-```
+For IntelliSense, use the CMake Tools extension.
+1. Select the `conan-default` configure preset.
+2. Select the `conan-release` build preset.
