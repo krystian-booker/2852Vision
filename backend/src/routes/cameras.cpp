@@ -138,6 +138,17 @@ void CamerasController::registerRoutes(drogon::HttpAppFramework& app) {
                 camera.camera_type = body.at("camera_type").get<CameraType>();
                 camera.identifier = body.at("identifier").get<std::string>();
 
+                // If name is generic "USB", try to use the discovered device name
+                if (camera.name == "USB" || camera.name == "USB Camera") {
+                    auto devices = CameraService::instance().discoverCameras(camera.camera_type);
+                    for (const auto& dev : devices) {
+                        if (dev.identifier == camera.identifier && !dev.name.empty() && dev.name != "USB Camera") {
+                            camera.name = dev.name;
+                            break;
+                        }
+                    }
+                }
+
                 if (body.contains("resolution")) {
                     camera.resolution_json = body["resolution"].dump();
                 }

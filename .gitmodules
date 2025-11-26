@@ -7,6 +7,3 @@
 [submodule "backend/third_party/cpp-mjpeg-streamer"]
 	path = backend/third_party/cpp-mjpeg-streamer
 	url = https://github.com/nadjieb/cpp-mjpeg-streamer.git
-[submodule "backend/third_party/openpnp-capture"]
-	path = backend/third_party/openpnp-capture
-	url = https://github.com/openpnp/openpnp-capture.git

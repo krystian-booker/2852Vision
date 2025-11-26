@@ -22,9 +22,14 @@
 #include "routes/calibration.hpp"
 #include "routes/networktables.hpp"
 
+#include <opencv2/core/utils/logger.hpp>
+
 using namespace drogon;
 
 int main(int argc, char** argv) {
+    // Suppress OpenCV INFO logs (e.g. parallel backend warnings)
+    cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_ERROR);
+
     spdlog::info("2852-Vision");
 
     // Load configuration

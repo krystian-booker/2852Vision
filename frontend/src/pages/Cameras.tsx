@@ -477,7 +477,6 @@ export default function Cameras() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Type</TableHead>
-                  <TableHead>Identifier</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Resolution/FPS</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -494,7 +493,6 @@ export default function Cameras() {
                     >
                       <TableCell className="font-medium">{camera.name}</TableCell>
                       <TableCell>{camera.camera_type}</TableCell>
-                      <TableCell className="font-mono text-xs">{camera.identifier}</TableCell>
                       <TableCell>
                         <StatusBadge
                           status={status?.connected ? 'online' : 'offline'}

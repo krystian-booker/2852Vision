@@ -51,7 +51,6 @@ target_link_libraries(backend PRIVATE
     ntcore
     wpiutil
     wpinet
-    openpnp-capture
 )
 
 if(WIN32)

@@ -2,10 +2,199 @@
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
-#include <cmath>
-#include <climits>
+#include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <dshow.h>
+#pragma comment(lib, "strmiids")
+#include <map>
+#endif
 
 namespace vision {
+
+// Helper for DirectShow enumeration
+#ifdef _WIN32
+struct DShowDevice {
+    int index;
+    std::string name;
+    std::string path;
+};
+
+static std::vector<DShowDevice> enumDShowDevices() {
+    std::vector<DShowDevice> devices;
+    HRESULT hr;
+    ICreateDevEnum* pDevEnum = NULL;
+    IEnumMoniker* pEnum = NULL;
+
+    CoInitialize(NULL);
+
+    hr = CoCreateInstance(CLSID_SystemDeviceEnum, NULL, CLSCTX_INPROC_SERVER,
+                          IID_ICreateDevEnum, (void**)&pDevEnum);
+    if (SUCCEEDED(hr)) {
+        hr = pDevEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory, &pEnum, 0);
+        if (hr == S_OK) {
+            IMoniker* pMoniker = NULL;
+            int index = 0;
+            while (pEnum->Next(1, &pMoniker, NULL) == S_OK) {
+                IPropertyBag* pPropBag;
+                hr = pMoniker->BindToStorage(0, 0, IID_IPropertyBag, (void**)&pPropBag);
+                if (SUCCEEDED(hr)) {
+                    VARIANT var;
+                    VariantInit(&var);
+
+                    // Get Friendly Name
+                    std::string name = "USB Camera";
+                    hr = pPropBag->Read(L"FriendlyName", &var, 0);
+                    if (SUCCEEDED(hr)) {
+                        int len = WideCharToMultiByte(CP_UTF8, 0, var.bstrVal, -1, NULL, 0, NULL, NULL);
+                        if (len > 0) {
+                            name.resize(len - 1);
+                            WideCharToMultiByte(CP_UTF8, 0, var.bstrVal, -1, &name[0], len, NULL, NULL);
+                        }
+                        VariantClear(&var);
+                    }
+
+                    // Get Device Path
+                    std::string path = "";
+                    hr = pPropBag->Read(L"DevicePath", &var, 0);
+                    if (SUCCEEDED(hr)) {
+                        int len = WideCharToMultiByte(CP_UTF8, 0, var.bstrVal, -1, NULL, 0, NULL, NULL);
+                        if (len > 0) {
+                            path.resize(len - 1);
+                            WideCharToMultiByte(CP_UTF8, 0, var.bstrVal, -1, &path[0], len, NULL, NULL);
+                        }
+                        VariantClear(&var);
+                    }
+
+                    devices.push_back({index, name, path});
+                    pPropBag->Release();
+                }
+                pMoniker->Release();
+                index++;
+            }
+            pEnum->Release();
+        }
+        pDevEnum->Release();
+    }
+    CoUninitialize();
+    CoUninitialize();
+    return devices;
+}
+
+// Helper to get capabilities via DirectShow
+static std::vector<CameraProfile> getDShowCapabilities(int deviceIndex) {
+    std::vector<CameraProfile> profiles;
+    HRESULT hr;
+    ICreateDevEnum* pDevEnum = NULL;
+    IEnumMoniker* pEnum = NULL;
+    IMoniker* pMoniker = NULL;
+    IBaseFilter* pFilter = NULL;
+    IPin* pPin = NULL;
+    IEnumPins* pEnumPins = NULL;
+    IAMStreamConfig* pStreamConfig = NULL;
+
+    CoInitialize(NULL);
+
+    // Create Device Enumerator
+    hr = CoCreateInstance(CLSID_SystemDeviceEnum, NULL, CLSCTX_INPROC_SERVER,
+                          IID_ICreateDevEnum, (void**)&pDevEnum);
+    if (FAILED(hr)) {
+        CoUninitialize();
+        return profiles;
+    }
+
+    // Create Class Enumerator for Video Input Devices
+    hr = pDevEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory, &pEnum, 0);
+    if (hr != S_OK) {
+        pDevEnum->Release();
+        CoUninitialize();
+        return profiles;
+    }
+
+    // Skip to the requested device index
+    pEnum->Skip(deviceIndex);
+    
+    if (pEnum->Next(1, &pMoniker, NULL) == S_OK) {
+        // Bind Moniker to Filter
+        hr = pMoniker->BindToObject(0, 0, IID_IBaseFilter, (void**)&pFilter);
+        if (SUCCEEDED(hr)) {
+            // Find the output pin
+            hr = pFilter->EnumPins(&pEnumPins);
+            if (SUCCEEDED(hr)) {
+                while (pEnumPins->Next(1, &pPin, NULL) == S_OK) {
+                    PIN_DIRECTION pinDir;
+                    pPin->QueryDirection(&pinDir);
+                    if (pinDir == PINDIR_OUTPUT) {
+                        // Found output pin, get IAMStreamConfig
+                        hr = pPin->QueryInterface(IID_IAMStreamConfig, (void**)&pStreamConfig);
+                        if (SUCCEEDED(hr)) {
+                            int count = 0, size = 0;
+                            pStreamConfig->GetNumberOfCapabilities(&count, &size);
+
+                            if (size == sizeof(VIDEO_STREAM_CONFIG_CAPS)) {
+                                for (int i = 0; i < count; i++) {
+                                    VIDEO_STREAM_CONFIG_CAPS scc;
+                                    AM_MEDIA_TYPE* pmtConfig;
+                                    hr = pStreamConfig->GetStreamCaps(i, &pmtConfig, (BYTE*)&scc);
+                                    if (SUCCEEDED(hr)) {
+                                        if (pmtConfig->formattype == FORMAT_VideoInfo) {
+                                            VIDEOINFOHEADER* pVih = (VIDEOINFOHEADER*)pmtConfig->pbFormat;
+                                            int w = pVih->bmiHeader.biWidth;
+                                            int h = pVih->bmiHeader.biHeight;
+                                            
+                                            // Calculate FPS from AvgTimePerFrame (100ns units)
+                                            // 10,000,000 / AvgTimePerFrame = FPS
+                                            int fps = 0;
+                                            if (pVih->AvgTimePerFrame > 0) {
+                                                fps = static_cast<int>(10000000 / pVih->AvgTimePerFrame);
+                                            } else if (scc.MinFrameInterval > 0) {
+                                                 fps = static_cast<int>(10000000 / scc.MinFrameInterval);
+                                            }
+
+                                            if (w > 0 && h > 0 && fps > 0) {
+                                                profiles.push_back({w, h, fps});
+                                            }
+                                        }
+                                        // DeleteMediaType(pmtConfig); // Helper needed or manual delete
+                                        if (pmtConfig->cbFormat != 0) CoTaskMemFree((PVOID)pmtConfig->pbFormat);
+                                        if (pmtConfig->pUnk != NULL) pmtConfig->pUnk->Release();
+                                        CoTaskMemFree(pmtConfig);
+                                    }
+                                }
+                            }
+                            pStreamConfig->Release();
+                        }
+                    }
+                    pPin->Release();
+                }
+                pEnumPins->Release();
+            }
+            pFilter->Release();
+        }
+        pMoniker->Release();
+    }
+
+    pEnum->Release();
+    pDevEnum->Release();
+    CoUninitialize();
+
+    // Remove duplicates and sort
+    std::sort(profiles.begin(), profiles.end(), [](const CameraProfile& a, const CameraProfile& b) {
+        if (a.width != b.width) return a.width > b.width;
+        if (a.height != b.height) return a.height > b.height;
+        return a.fps > b.fps;
+    });
+    
+    profiles.erase(std::unique(profiles.begin(), profiles.end(), 
+        [](const CameraProfile& a, const CameraProfile& b) {
+            return a.width == b.width && a.height == b.height && a.fps == b.fps;
+        }), profiles.end());
+
+    return profiles;
+}
+#endif
+
 
 USBDriver::USBDriver(const Camera& camera)
     : camera_(camera) {
@@ -16,231 +205,28 @@ USBDriver::~USBDriver() {
 }
 
 bool USBDriver::connect() {
-    if (connected_) {
+    if (isConnected()) {
         return true;
     }
 
-    // Create capture context
-    ctx_ = Cap_createContext();
-    if (!ctx_) {
-        spdlog::error("Failed to create openpnp-capture context");
+    int deviceIndex = findDeviceIndex();
+    if (deviceIndex < 0) {
+        spdlog::error("Could not find device index for camera '{}'", camera_.identifier);
         return false;
     }
 
-    // Find the device matching our identifier
-    deviceId_ = findDeviceId();
-
-    uint32_t deviceCount = Cap_getDeviceCount(ctx_);
-    if (deviceCount == 0) {
-        spdlog::error("No USB cameras found");
-        Cap_releaseContext(ctx_);
-        ctx_ = nullptr;
+    // Open the camera
+    // Prefer DirectShow on Windows for better control, otherwise ANY
+#ifdef _WIN32
+    if (!cap_.open(deviceIndex, cv::CAP_DSHOW)) {
+#else
+    if (!cap_.open(deviceIndex, cv::CAP_ANY)) {
+#endif
+        spdlog::error("Failed to open USB camera '{}' at index {}", camera_.name, deviceIndex);
         return false;
     }
 
-    if (deviceId_ >= deviceCount) {
-        spdlog::error("Device ID {} out of range (found {} devices)", deviceId_, deviceCount);
-        Cap_releaseContext(ctx_);
-        ctx_ = nullptr;
-        return false;
-    }
-
-    // Find the best format matching our requirements
-    formatId_ = findBestFormat();
-
-    // Get format info for logging and buffer allocation
-    CapFormatInfo formatInfo;
-    if (Cap_getFormatInfo(ctx_, deviceId_, formatId_, &formatInfo) != CAPRESULT_OK) {
-        spdlog::error("Failed to get format info for device {}", camera_.identifier);
-        Cap_releaseContext(ctx_);
-        ctx_ = nullptr;
-        return false;
-    }
-
-    frameWidth_ = static_cast<int>(formatInfo.width);
-    frameHeight_ = static_cast<int>(formatInfo.height);
-
-    spdlog::info("Opening USB camera '{}' with format {}x{} @ {} fps",
-                 camera_.name, frameWidth_, frameHeight_, formatInfo.fps);
-
-    // Open the stream
-    stream_ = Cap_openStream(ctx_, deviceId_, formatId_);
-    if (stream_ < 0) {
-        spdlog::error("Failed to open stream for USB camera '{}'", camera_.identifier);
-        Cap_releaseContext(ctx_);
-        ctx_ = nullptr;
-        return false;
-    }
-
-    // Allocate frame buffer (RGB24 format)
-    frameBuffer_.resize(static_cast<size_t>(frameWidth_) * frameHeight_ * 3);
-
-    // Apply camera settings
-    setExposure(camera_.exposure_mode, camera_.exposure_value);
-    setGain(camera_.gain_mode, camera_.gain_value);
-
-    connected_ = true;
-    spdlog::info("USB camera '{}' connected successfully ({}x{} @ {} fps)",
-                 camera_.name, frameWidth_, frameHeight_, formatInfo.fps);
-
-    return true;
-}
-
-void USBDriver::disconnect() {
-    if (stream_ >= 0 && ctx_) {
-        Cap_closeStream(ctx_, stream_);
-        stream_ = -1;
-    }
-
-    if (ctx_) {
-        Cap_releaseContext(ctx_);
-        ctx_ = nullptr;
-    }
-
-    frameBuffer_.clear();
-    frameWidth_ = 0;
-    frameHeight_ = 0;
-    connected_ = false;
-}
-
-bool USBDriver::isConnected() const {
-    return connected_ && ctx_ != nullptr && stream_ >= 0;
-}
-
-FrameResult USBDriver::getFrame() {
-    FrameResult result;
-
-    if (!isConnected()) {
-        spdlog::debug("getFrame called but camera not connected");
-        return result;
-    }
-
-    // Check if a new frame is available
-    if (!Cap_hasNewFrame(ctx_, stream_)) {
-        return result;  // No new frame available yet
-    }
-
-    // Capture the frame into our RGB buffer
-    CapResult capResult = Cap_captureFrame(ctx_, stream_,
-                                            frameBuffer_.data(),
-                                            static_cast<uint32_t>(frameBuffer_.size()));
-
-    if (capResult != CAPRESULT_OK) {
-        spdlog::warn("Failed to capture frame from USB camera '{}' (error: {})",
-                     camera_.name, capResult);
-        return result;
-    }
-
-    // Create cv::Mat from RGB buffer and convert to BGR for OpenCV
-    cv::Mat rgbFrame(frameHeight_, frameWidth_, CV_8UC3, frameBuffer_.data());
-
-    // OpenCV uses BGR format, openpnp-capture returns RGB
-    cv::cvtColor(rgbFrame, result.color, cv::COLOR_RGB2BGR);
-
-    return result;
-}
-
-void USBDriver::setExposure(ExposureMode mode, int value) {
-    if (!isConnected()) return;
-
-    if (mode == ExposureMode::Auto) {
-        CapResult res = Cap_setAutoProperty(ctx_, stream_, CAPPROPID_EXPOSURE, 1);
-        if (res != CAPRESULT_OK && res != CAPRESULT_PROPERTYNOTSUPPORTED) {
-            spdlog::debug("Failed to set auto exposure on camera '{}'", camera_.name);
-        }
-    } else {
-        // Disable auto exposure first
-        Cap_setAutoProperty(ctx_, stream_, CAPPROPID_EXPOSURE, 0);
-
-        CapResult res = Cap_setProperty(ctx_, stream_, CAPPROPID_EXPOSURE, value);
-        if (res != CAPRESULT_OK && res != CAPRESULT_PROPERTYNOTSUPPORTED) {
-            spdlog::debug("Failed to set manual exposure {} on camera '{}'", value, camera_.name);
-        }
-    }
-}
-
-void USBDriver::setGain(GainMode mode, int value) {
-    if (!isConnected()) return;
-
-    // Note: openpnp-capture doesn't have auto-gain, only manual
-    if (mode == GainMode::Manual) {
-        CapResult res = Cap_setProperty(ctx_, stream_, CAPPROPID_GAIN, value);
-        if (res != CAPRESULT_OK && res != CAPRESULT_PROPERTYNOTSUPPORTED) {
-            spdlog::debug("Failed to set gain {} on camera '{}'", value, camera_.name);
-        }
-    }
-}
-
-int USBDriver::getExposure() const {
-    if (!isConnected()) return 0;
-
-    int32_t value = 0;
-    CapResult res = Cap_getProperty(ctx_, stream_, CAPPROPID_EXPOSURE, &value);
-    if (res != CAPRESULT_OK) {
-        return 0;
-    }
-    return static_cast<int>(value);
-}
-
-int USBDriver::getGain() const {
-    if (!isConnected()) return 0;
-
-    int32_t value = 0;
-    CapResult res = Cap_getProperty(ctx_, stream_, CAPPROPID_GAIN, &value);
-    if (res != CAPRESULT_OK) {
-        return 0;
-    }
-    return static_cast<int>(value);
-}
-
-CapDeviceID USBDriver::findDeviceId() const {
-    uint32_t count = Cap_getDeviceCount(ctx_);
-    if (count == 0) {
-        return 0;
-    }
-
-    // Try exact match on unique ID first
-    for (uint32_t i = 0; i < count; i++) {
-        const char* uniqueId = Cap_getDeviceUniqueID(ctx_, i);
-        if (uniqueId && camera_.identifier == uniqueId) {
-            spdlog::debug("Found camera by unique ID: {}", uniqueId);
-            return i;
-        }
-    }
-
-    // Try matching by device name
-    for (uint32_t i = 0; i < count; i++) {
-        const char* name = Cap_getDeviceName(ctx_, i);
-        if (name && camera_.identifier == name) {
-            spdlog::debug("Found camera by name: {}", name);
-            return i;
-        }
-    }
-
-    // Try numeric index
-    try {
-        int index = std::stoi(camera_.identifier);
-        if (index >= 0 && static_cast<uint32_t>(index) < count) {
-            spdlog::debug("Using camera at numeric index: {}", index);
-            return static_cast<CapDeviceID>(index);
-        }
-    } catch (...) {
-        // Not a numeric index
-    }
-
-    // Default to first device
-    spdlog::warn("Could not find device '{}', using device 0", camera_.identifier);
-    return 0;
-}
-
-CapFormatID USBDriver::findBestFormat() const {
-    int32_t numFormats = Cap_getNumFormats(ctx_, deviceId_);
-    if (numFormats <= 0) {
-        spdlog::warn("No formats available for device, using format 0");
-        return 0;
-    }
-
-    // Parse requested resolution
+    // Set resolution if specified
     int reqWidth = 640;
     int reqHeight = 480;
     int reqFps = 30;
@@ -259,179 +245,236 @@ CapFormatID USBDriver::findBestFormat() const {
         reqFps = *camera_.framerate;
     }
 
-    spdlog::debug("Looking for format closest to {}x{} @ {} fps", reqWidth, reqHeight, reqFps);
+    // Try to set properties
+    cap_.set(cv::CAP_PROP_FRAME_WIDTH, reqWidth);
+    cap_.set(cv::CAP_PROP_FRAME_HEIGHT, reqHeight);
+    cap_.set(cv::CAP_PROP_FPS, reqFps);
 
-    // Find exact or closest match
-    CapFormatID bestFormat = 0;
-    int bestScore = INT_MAX;
+    // Verify what we actually got
+    int actualWidth = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_WIDTH));
+    int actualHeight = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_HEIGHT));
+    int actualFps = static_cast<int>(cap_.get(cv::CAP_PROP_FPS));
 
-    for (int32_t i = 0; i < numFormats; i++) {
-        CapFormatInfo info;
-        if (Cap_getFormatInfo(ctx_, deviceId_, static_cast<CapFormatID>(i), &info) == CAPRESULT_OK) {
-            // Calculate score (lower is better)
-            // Weight resolution differences more heavily than fps
-            int widthDiff = std::abs(static_cast<int>(info.width) - reqWidth);
-            int heightDiff = std::abs(static_cast<int>(info.height) - reqHeight);
-            int fpsDiff = std::abs(static_cast<int>(info.fps) - reqFps);
+    spdlog::info("USB camera '{}' connected. Requested: {}x{} @ {} fps. Actual: {}x{} @ {} fps",
+                 camera_.name, reqWidth, reqHeight, reqFps, actualWidth, actualHeight, actualFps);
 
-            int score = widthDiff + heightDiff + fpsDiff * 10;
+    // Apply camera settings
+    setExposure(camera_.exposure_mode, camera_.exposure_value);
+    setGain(camera_.gain_mode, camera_.gain_value);
 
-            if (score < bestScore) {
-                bestScore = score;
-                bestFormat = static_cast<CapFormatID>(i);
-            }
-
-            // Exact match - stop searching
-            if (score == 0) {
-                break;
-            }
-        }
-    }
-
-    // Log the selected format
-    CapFormatInfo selectedInfo;
-    if (Cap_getFormatInfo(ctx_, deviceId_, bestFormat, &selectedInfo) == CAPRESULT_OK) {
-        spdlog::debug("Selected format: {}x{} @ {} fps (score: {})",
-                      selectedInfo.width, selectedInfo.height, selectedInfo.fps, bestScore);
-    }
-
-    return bestFormat;
+    return true;
 }
 
-CapDeviceID USBDriver::findDeviceByIdentifier(CapContext ctx, const std::string& identifier) {
-    uint32_t count = Cap_getDeviceCount(ctx);
-    if (count == 0) {
+void USBDriver::disconnect() {
+    if (cap_.isOpened()) {
+        cap_.release();
+    }
+}
+
+bool USBDriver::isConnected() const {
+    return cap_.isOpened();
+}
+
+FrameResult USBDriver::getFrame() {
+    FrameResult result;
+
+    if (!isConnected()) {
+        return result;
+    }
+
+    if (!cap_.read(result.color)) {
+        spdlog::warn("Failed to read frame from USB camera '{}'", camera_.name);
+    }
+
+    return result;
+}
+
+void USBDriver::setExposure(ExposureMode mode, int value) {
+    if (!isConnected()) return;
+
+    if (mode == ExposureMode::Auto) {
+        // OpenCV auto exposure is usually -1 or 0/1 depending on backend
+        // For DirectShow: 1 = Manual, 8 = Auto? It varies wildly.
+        // Usually setting CAP_PROP_AUTO_EXPOSURE to 3 (auto) or 1 (manual)
+        // But for many webcams, just setting exposure value switches to manual.
+        
+        // Try standard approach:
+        cap_.set(cv::CAP_PROP_AUTO_EXPOSURE, 3); // 3 is often 'auto' in v4l2/dshow
+    } else {
+        cap_.set(cv::CAP_PROP_AUTO_EXPOSURE, 1); // 1 is often 'manual'
+        cap_.set(cv::CAP_PROP_EXPOSURE, value);
+    }
+}
+
+void USBDriver::setGain(GainMode mode, int value) {
+    if (!isConnected()) return;
+
+    if (mode == GainMode::Manual) {
+        cap_.set(cv::CAP_PROP_GAIN, value);
+    }
+    // OpenCV doesn't have a standard "Auto Gain" property separate from general auto modes usually
+}
+
+int USBDriver::getExposure() const {
+    if (!isConnected()) return 0;
+    return static_cast<int>(cap_.get(cv::CAP_PROP_EXPOSURE));
+}
+
+int USBDriver::getGain() const {
+    if (!isConnected()) return 0;
+    return static_cast<int>(cap_.get(cv::CAP_PROP_GAIN));
+}
+
+int USBDriver::findDeviceIndex() const {
+    // If identifier is an integer, use it directly (legacy support)
+    try {
+        return std::stoi(camera_.identifier);
+    } catch (...) {
+        // Not an integer, try to match by path using DirectShow
+#ifdef _WIN32
+        auto devices = enumDShowDevices();
+        for (const auto& dev : devices) {
+            if (dev.path == camera_.identifier) {
+                return dev.index;
+            }
+        }
+        // Fallback: try to match by name
+        for (const auto& dev : devices) {
+            if (dev.name == camera_.identifier) {
+                return dev.index;
+            }
+        }
+#endif
+        spdlog::warn("Camera identifier '{}' not found, defaulting to index 0", camera_.identifier);
         return 0;
     }
-
-    // Try exact match on unique ID first
-    for (uint32_t i = 0; i < count; i++) {
-        const char* uniqueId = Cap_getDeviceUniqueID(ctx, i);
-        if (uniqueId && identifier == uniqueId) {
-            return i;
-        }
-    }
-
-    // Try matching by device name
-    for (uint32_t i = 0; i < count; i++) {
-        const char* name = Cap_getDeviceName(ctx, i);
-        if (name && identifier == name) {
-            return i;
-        }
-    }
-
-    // Try numeric index
-    try {
-        int index = std::stoi(identifier);
-        if (index >= 0 && static_cast<uint32_t>(index) < count) {
-            return static_cast<CapDeviceID>(index);
-        }
-    } catch (...) {
-        // Not a numeric index
-    }
-
-    return 0;
 }
 
 std::vector<DeviceInfo> USBDriver::listDevices() {
     std::vector<DeviceInfo> devices;
 
-    CapContext ctx = Cap_createContext();
-    if (!ctx) {
-        spdlog::error("Failed to create openpnp-capture context for device enumeration");
-        return devices;
-    }
-
-    uint32_t count = Cap_getDeviceCount(ctx);
-    spdlog::debug("openpnp-capture found {} USB camera(s)", count);
-
-    for (uint32_t i = 0; i < count; i++) {
+#ifdef _WIN32
+    auto dshowDevices = enumDShowDevices();
+    for (const auto& d : dshowDevices) {
         DeviceInfo info;
         info.camera_type = CameraType::USB;
-
-        // Get device name
-        const char* name = Cap_getDeviceName(ctx, i);
-        if (name && name[0] != '\0') {
-            info.name = name;
-        } else {
-            info.name = "USB Camera " + std::to_string(i);
-        }
-
-        // Get unique identifier
-        const char* uniqueId = Cap_getDeviceUniqueID(ctx, i);
-        if (uniqueId && uniqueId[0] != '\0') {
-            info.identifier = uniqueId;
-        } else {
-            info.identifier = std::to_string(i);
-        }
-
+        info.identifier = d.path.empty() ? std::to_string(d.index) : d.path;
+        info.name = d.name;
+        info.serial_number = d.path; // Use path as serial for uniqueness
         devices.push_back(info);
-        spdlog::debug("Found USB camera {}: '{}' (id: '{}')", i, info.name, info.identifier);
+        spdlog::info("Discovered USB Camera: '{}' ({})", d.name, d.path);
     }
+    spdlog::info("Discovered {} USB cameras via DirectShow", devices.size());
+#else
+    // Fallback for non-Windows (OpenCV scan)
+    spdlog::info("Scanning for USB cameras (indices 0-9)...");
+    for (int i = 0; i < 10; i++) {
+        cv::VideoCapture tempCap;
+        if (tempCap.open(i, cv::CAP_ANY)) {
+            if (tempCap.isOpened()) {
+                DeviceInfo info;
+                info.camera_type = CameraType::USB;
+                info.identifier = std::to_string(i);
+                info.name = "USB Camera " + std::to_string(i);
+                devices.push_back(info);
+                tempCap.release();
+            }
+        }
+    }
+#endif
 
-    Cap_releaseContext(ctx);
-
-    spdlog::info("Discovered {} USB camera(s)", devices.size());
     return devices;
 }
 
 std::vector<CameraProfile> USBDriver::getSupportedProfiles(const std::string& identifier) {
     std::vector<CameraProfile> profiles;
-
-    CapContext ctx = Cap_createContext();
-    if (!ctx) {
-        spdlog::error("Failed to create openpnp-capture context for profile enumeration");
-        return profiles;
-    }
-
-    // Find device by identifier
-    CapDeviceID deviceId = findDeviceByIdentifier(ctx, identifier);
-
-    int32_t numFormats = Cap_getNumFormats(ctx, deviceId);
-    if (numFormats < 0) {
-        spdlog::warn("Failed to get formats for device '{}'", identifier);
-        Cap_releaseContext(ctx);
-        return profiles;
-    }
-
-    spdlog::debug("Device '{}' has {} format(s)", identifier, numFormats);
-
-    for (int32_t i = 0; i < numFormats; i++) {
-        CapFormatInfo info;
-        if (Cap_getFormatInfo(ctx, deviceId, static_cast<CapFormatID>(i), &info) == CAPRESULT_OK) {
-            CameraProfile profile;
-            profile.width = static_cast<int>(info.width);
-            profile.height = static_cast<int>(info.height);
-            profile.fps = static_cast<int>(info.fps);
-
-            // Check for duplicates (some cameras report the same resolution with different fourcc)
-            bool exists = false;
-            for (const auto& p : profiles) {
-                if (p.width == profile.width &&
-                    p.height == profile.height &&
-                    p.fps == profile.fps) {
-                    exists = true;
-                    break;
-                }
+    
+    // We need to open the camera to test resolutions
+    int index = 0;
+    try {
+        index = std::stoi(identifier);
+    } catch (...) {
+#ifdef _WIN32
+        auto devices = enumDShowDevices();
+        for (const auto& dev : devices) {
+            if (dev.path == identifier) {
+                index = dev.index;
+                break;
             }
+        }
+#endif
+    }
 
-            if (!exists) {
-                profiles.push_back(profile);
+    // Try DirectShow first on Windows
+#ifdef _WIN32
+    profiles = getDShowCapabilities(index);
+    if (!profiles.empty()) {
+        spdlog::info("Retrieved {} profiles via DirectShow for camera {}", profiles.size(), identifier);
+        return profiles;
+    }
+    spdlog::warn("DirectShow capability query failed, falling back to probing");
+#endif
+
+    cv::VideoCapture cap;
+#ifdef _WIN32
+    if (!cap.open(index, cv::CAP_DSHOW)) return profiles;
+#else
+    if (!cap.open(index, cv::CAP_ANY)) return profiles;
+#endif
+
+    struct Res { int w; int h; };
+    std::vector<Res> commonResolutions = {
+        {1920, 1080}, {1280, 720}, {1280, 960}, {1600, 1200},
+        {800, 600}, {640, 480}, {320, 240}
+    };
+
+    for (const auto& res : commonResolutions) {
+        cap.set(cv::CAP_PROP_FRAME_WIDTH, res.w);
+        cap.set(cv::CAP_PROP_FRAME_HEIGHT, res.h);
+        
+        int w = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+        int h = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+        
+        if (w == res.w && h == res.h) {
+            // Check 30 and 60 fps
+            profiles.push_back({w, h, 30});
+            
+            // Try setting higher FPS
+            cap.set(cv::CAP_PROP_FPS, 60);
+            if (cap.get(cv::CAP_PROP_FPS) >= 59) {
+                profiles.push_back({w, h, 60});
             }
         }
     }
-
-    Cap_releaseContext(ctx);
-
-    // Sort profiles by resolution (width, then height), then fps
+    
+    // Sort
     std::sort(profiles.begin(), profiles.end(), [](const CameraProfile& a, const CameraProfile& b) {
-        if (a.width != b.width) return a.width < b.width;
-        if (a.height != b.height) return a.height < b.height;
-        return a.fps < b.fps;
+        return (a.width * a.height) > (b.width * b.height);
     });
 
-    spdlog::debug("Found {} unique profile(s) for device '{}'", profiles.size(), identifier);
     return profiles;
+}
+
+void USBDriver::setFocus(bool autoFocus, int value) {
+    if (!isConnected()) return;
+    
+    if (autoFocus) {
+        cap_.set(cv::CAP_PROP_AUTOFOCUS, 1);
+    } else {
+        cap_.set(cv::CAP_PROP_AUTOFOCUS, 0);
+        cap_.set(cv::CAP_PROP_FOCUS, value);
+    }
+}
+
+void USBDriver::setWhiteBalance(bool autoWB, int value) {
+    if (!isConnected()) return;
+
+    if (autoWB) {
+        cap_.set(cv::CAP_PROP_AUTO_WB, 1);
+    } else {
+        cap_.set(cv::CAP_PROP_AUTO_WB, 0);
+        cap_.set(cv::CAP_PROP_WB_TEMPERATURE, value);
+    }
 }
 
 } // namespace vision
