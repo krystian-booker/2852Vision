@@ -7,6 +7,10 @@
 #include <mutex>
 #include <vector>
 #include <unordered_set>
+#include <queue>
+#include <thread>
+#include <atomic>
+#include <condition_variable>
 
 namespace vision {
 
@@ -45,6 +49,20 @@ private:
     
     // Track registered paths to ensure they are created before checking hasClient
     std::unordered_set<std::string> registeredPaths_;
+
+    // Worker thread for asynchronous encoding
+    struct StreamerFrame {
+        std::string path;
+        cv::Mat frame;
+    };
+
+    std::queue<StreamerFrame> queue_;
+    std::mutex queueMutex_;
+    std::condition_variable queueCv_;
+    std::thread workerThread_;
+    std::atomic<bool> running_{false};
+    
+    void workerLoop();
 };
 
 } // namespace vision

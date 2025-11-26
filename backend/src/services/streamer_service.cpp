@@ -26,6 +26,10 @@ void StreamerService::initialize(int port) {
         // Pre-configure compression parameters
         compression_params_ = {cv::IMWRITE_JPEG_QUALITY, 80};
         
+        // Start worker thread
+        running_ = true;
+        workerThread_ = std::thread(&StreamerService::workerLoop, this);
+
         initialized_ = true;
         spdlog::info("MJPEG Streamer started on port {}", port);
     } catch (const std::exception& e) {
@@ -34,12 +38,26 @@ void StreamerService::initialize(int port) {
 }
 
 void StreamerService::shutdown() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (streamer_ && streamer_->isRunning()) {
-        streamer_->stop();
-        spdlog::info("MJPEG Streamer stopped");
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (streamer_ && streamer_->isRunning()) {
+            streamer_->stop();
+            spdlog::info("MJPEG Streamer stopped");
+        }
+        initialized_ = false;
     }
-    initialized_ = false;
+
+    // Stop worker thread
+    running_ = false;
+    queueCv_.notify_all();
+    if (workerThread_.joinable()) {
+        workerThread_.join();
+    }
+    
+    // Clear queue
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    std::queue<StreamerFrame> empty;
+    std::swap(queue_, empty);
 }
 
 void StreamerService::publishFrame(const std::string& path, const cv::Mat& frame) {
@@ -51,48 +69,74 @@ void StreamerService::publishFrame(const std::string& path, const cv::Mat& frame
         return;
     }
 
-    // Check if anyone is listening to this path to save CPU
-    // Note: hasClient is not thread-safe in the library if called concurrently with removeClient,
-    // but for now we assume it's "safe enough" or we just encode anyway. 
-    // The library's publish method is thread-safe.
-    // Check if anyone is listening to this path to save CPU
-    // We use hasClient to check if there are any active subscribers for this path.
-    // If not, we skip encoding and publishing to save resources.
-    // BUT: We must ensure the path is registered (published to at least once) 
-    // otherwise clients will get 404 and never be able to connect.
-    bool pathRegistered = false;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (registeredPaths_.find(path) != registeredPaths_.end()) {
-            pathRegistered = true;
-        }
-    }
-
-    if (pathRegistered && !streamer_->hasClient(path)) {
-        // spdlog::trace("No clients for {}, skipping", path);
+    // Quick check if anyone is listening to this path to save queue overhead
+    // We assume hasClient is safe enough to call without lock for this optimization
+    if (streamer_->hasClient(path) == false) {
         return;
     }
 
-    // spdlog::info("Publishing frame to {} (hasClient: {})", path, streamer_->hasClient(path));
-
-    try {
-        // Encode to JPEG
-        // We use a local buffer if we want to be fully thread-safe without locking the class member buffer
-        // or we lock the buffer. Given this might be called from multiple threads (different cameras),
-        // let's use a local buffer for safety.
-        std::vector<uchar> local_buffer;
-        cv::imencode(".jpg", frame, local_buffer, compression_params_);
-
-        // Publish
-        streamer_->publish(path, std::string(local_buffer.begin(), local_buffer.end()));
-
-        // Mark path as registered
-        if (!pathRegistered) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            registeredPaths_.insert(path);
+    {
+        std::lock_guard<std::mutex> lock(queueMutex_);
+        if (queue_.size() > 5) {
+            // Drop oldest frame if queue is full
+            queue_.pop();
         }
-    } catch (const std::exception& e) {
-        spdlog::error("Error publishing frame to {}: {}", path, e.what());
+        queue_.push({path, frame.clone()}); // Clone frame to ensure it's valid when processed
+    }
+    queueCv_.notify_one();
+}
+
+void StreamerService::workerLoop() {
+    while (running_) {
+        StreamerFrame item;
+        {
+            std::unique_lock<std::mutex> lock(queueMutex_);
+            queueCv_.wait(lock, [this] { return !queue_.empty() || !running_; });
+
+            if (!running_ && queue_.empty()) {
+                return;
+            }
+
+            if (queue_.empty()) {
+                continue;
+            }
+
+            item = queue_.front();
+            queue_.pop();
+        }
+
+        // Double check if client is still connected before encoding
+        if (!streamer_->hasClient(item.path)) {
+            continue;
+        }
+
+        try {
+            // Encode to JPEG
+            std::vector<uchar> local_buffer;
+            cv::imencode(".jpg", item.frame, local_buffer, compression_params_);
+
+            // Publish
+            streamer_->publish(item.path, std::string(local_buffer.begin(), local_buffer.end()));
+
+            // Mark path as registered if not already
+            // Note: We might want to optimize this to avoid locking every time
+            // but for now let's just do a quick check
+            bool needsRegistration = false;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (registeredPaths_.find(item.path) == registeredPaths_.end()) {
+                    needsRegistration = true;
+                }
+            }
+            
+            if (needsRegistration) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                registeredPaths_.insert(item.path);
+            }
+
+        } catch (const std::exception& e) {
+            spdlog::error("Error publishing frame to {}: {}", item.path, e.what());
+        }
     }
 }
 
