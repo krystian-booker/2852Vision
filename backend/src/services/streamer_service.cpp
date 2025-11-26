@@ -111,9 +111,30 @@ void StreamerService::workerLoop() {
         }
 
         try {
+            auto start = std::chrono::steady_clock::now();
+            
+            cv::Mat frameToEncode = item.frame;
+            cv::Mat resizedFrame;
+
+            // Downscale if too large (e.g., > 1280 width) to improve performance
+            if (frameToEncode.cols > 1280) {
+                double scale = 1280.0 / frameToEncode.cols;
+                cv::resize(frameToEncode, resizedFrame, cv::Size(), scale, scale);
+                frameToEncode = resizedFrame;
+            }
+
             // Encode to JPEG
             std::vector<uchar> local_buffer;
-            cv::imencode(".jpg", item.frame, local_buffer, compression_params_);
+            // Use slightly lower quality (70) for better performance
+            std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 70};
+            cv::imencode(".jpg", frameToEncode, local_buffer, params);
+
+            auto end = std::chrono::steady_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+            if (duration > 20) {
+                spdlog::warn("Slow encoding for {}: {}ms (Queue size: {})", item.path, duration, queue_.size());
+            }
 
             // Publish
             streamer_->publish(item.path, std::string(local_buffer.begin(), local_buffer.end()));
