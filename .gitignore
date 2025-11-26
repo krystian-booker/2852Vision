@@ -721,3 +721,4 @@ FodyWeavers.xsd
 .claude/settings.local.json
 frontend/.claude/settings.local.json
 CLAUDE.md
+backend/.claude/settings.local.json
