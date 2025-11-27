@@ -130,6 +130,34 @@ void StreamerService::workerLoop() {
                 frameToEncode = &resizedFrame;
             }
 
+            // --- FPS Calculation and Overlay ---
+            auto& tracker = fpsTrackers_[item.path];
+            tracker.frameCount++;
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - tracker.lastFrameTime).count();
+
+            if (elapsed >= 1000) {
+                tracker.currentFps = tracker.frameCount * 1000.0 / elapsed;
+                tracker.frameCount = 0;
+                tracker.lastFrameTime = now;
+            }
+
+            if (tracker.currentFps > 0.0) {
+                std::string fpsText = fmt::format("FPS: {:.1f}", tracker.currentFps);
+                int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+                double fontScale = 1.0;
+                int thickness = 2;
+                int baseline = 0;
+                cv::Size textSize = cv::getTextSize(fpsText, fontFace, fontScale, thickness, &baseline);
+                
+                // Position: Top Right
+                cv::Point textOrg(frameToEncode->cols - textSize.width - 10, textSize.height + 10);
+                
+                // Draw FPS
+                cv::putText(*frameToEncode, fpsText, textOrg, fontFace, fontScale, cv::Scalar(255, 255, 255), thickness);
+            }
+            // -----------------------------------
+
             // Encode to JPEG
             // Use lower quality (50) for better performance
             std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 50};

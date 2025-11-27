@@ -62,6 +62,14 @@ private:
     std::thread workerThread_;
     std::atomic<bool> running_{false};
     
+    struct FpsTracker {
+        std::chrono::steady_clock::time_point lastFrameTime = std::chrono::steady_clock::now();
+        int frameCount = 0;
+        double currentFps = 0.0;
+    };
+
+    std::unordered_map<std::string, FpsTracker> fpsTrackers_;
+
     void workerLoop();
 };
 
