@@ -139,6 +139,9 @@ export default function Dashboard() {
     try {
       const data = await api.get<Camera[]>('/api/cameras')
       setCameras(data)
+      if (data.length > 0 && !selectedCameraId) {
+        setSelectedCameraId(data[0].id.toString())
+      }
     } catch (error) {
       toast({ title: 'Error', description: 'Failed to load cameras', variant: 'destructive' })
     }
@@ -167,6 +170,14 @@ export default function Dashboard() {
     try {
       const data = await api.get<Pipeline[]>(`/api/cameras/${selectedCameraId}/pipelines`)
       setPipelines(data)
+      if (data.length > 0) {
+        const currentExists = data.find((p) => p.id.toString() === selectedPipelineId)
+        if (!selectedPipelineId || !currentExists) {
+          setSelectedPipelineId(data[0].id.toString())
+        }
+      } else {
+        setSelectedPipelineId('')
+      }
     } catch (error) {
       toast({ title: 'Error', description: 'Failed to load pipelines', variant: 'destructive' })
       setPipelines([])

@@ -87,6 +87,13 @@ void StreamerService::publishFrame(const std::string& path, const cv::Mat& frame
 }
 
 void StreamerService::workerLoop() {
+    // Reusable buffers to avoid allocation overhead
+    cv::Mat resizedFrame;
+    std::vector<uchar> local_buffer;
+    // Reserve some memory to avoid initial reallocations (approx 1280*720*3 for mat, 500KB for jpeg)
+    // This is a heuristic; actual usage will adapt.
+    local_buffer.reserve(500 * 1024); 
+
     while (running_) {
         StreamerFrame item;
         {
@@ -113,21 +120,20 @@ void StreamerService::workerLoop() {
         try {
             auto start = std::chrono::steady_clock::now();
             
-            cv::Mat frameToEncode = item.frame;
-            cv::Mat resizedFrame;
+            cv::Mat* frameToEncode = &item.frame;
 
-            // Downscale if too large (e.g., > 1280 width) to improve performance
-            if (frameToEncode.cols > 1280) {
-                double scale = 1280.0 / frameToEncode.cols;
-                cv::resize(frameToEncode, resizedFrame, cv::Size(), scale, scale);
-                frameToEncode = resizedFrame;
+            // Downscale if too large (e.g., > 1024 width) to improve performance
+            if (frameToEncode->cols > 1024) {
+                double scale = 1024.0 / frameToEncode->cols;
+                // Use INTER_NEAREST for speed. It's much faster than LINEAR/CUBIC
+                cv::resize(*frameToEncode, resizedFrame, cv::Size(), scale, scale, cv::INTER_NEAREST);
+                frameToEncode = &resizedFrame;
             }
 
             // Encode to JPEG
-            std::vector<uchar> local_buffer;
-            // Use slightly lower quality (70) for better performance
-            std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 70};
-            cv::imencode(".jpg", frameToEncode, local_buffer, params);
+            // Use lower quality (50) for better performance
+            std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, 50};
+            cv::imencode(".jpg", *frameToEncode, local_buffer, params);
 
             auto end = std::chrono::steady_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
