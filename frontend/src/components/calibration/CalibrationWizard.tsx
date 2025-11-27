@@ -41,7 +41,7 @@ export function CalibrationWizard() {
         squaresY: 7,
         squareLength: 0.034,
         markerLength: 0.025,
-        dictionary: 'DICT_4X4_50'
+        dictionary: 'DICT_6X6_50'
     });
 
     const [detections, setDetections] = useState<any[]>([]);

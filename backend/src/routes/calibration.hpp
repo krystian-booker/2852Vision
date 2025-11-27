@@ -10,8 +10,9 @@ namespace vision {
 class CalibrationService {
 public:
     // Generate calibration board image
-    static cv::Mat generateBoard(int squaresX, int squaresY, int squareSize,
-                                 int markerSize, const std::string& dictionary = "DICT_6X6_250");
+    static cv::Mat generateBoard(int squaresX, int squaresY, float squareLength,
+                                 float markerLength, int imageSquareSizePixels = 100,
+                                 const std::string& dictionary = "DICT_6X6_250");
 
     // Detect CharucoBoard corners in image
     static nlohmann::json detectMarkers(const cv::Mat& image,

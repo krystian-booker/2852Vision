@@ -11,23 +11,30 @@
 
 namespace vision {
 
-cv::Mat CalibrationService::generateBoard(int squaresX, int squaresY, int squareSize,
-                                          int markerSize, const std::string& dictionary) {
+cv::Mat CalibrationService::generateBoard(int squaresX, int squaresY, float squareLength,
+                                          float markerLength, int imageSquareSizePixels,
+                                          const std::string& dictionary) {
     // Get ArUco dictionary
-    cv::aruco::Dictionary dict = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
+    cv::aruco::PredefinedDictionaryType dictType = cv::aruco::DICT_6X6_250;
+    
+    if (dictionary == "DICT_4X4_50") dictType = cv::aruco::DICT_4X4_50;
+    else if (dictionary == "DICT_5X5_50") dictType = cv::aruco::DICT_5X5_50;
+    else if (dictionary == "DICT_6X6_50") dictType = cv::aruco::DICT_6X6_50;
+    
+    cv::aruco::Dictionary dict = cv::aruco::getPredefinedDictionary(dictType);
 
     // Create CharucoBoard
     cv::aruco::CharucoBoard board(
         cv::Size(squaresX, squaresY),
-        static_cast<float>(squareSize),
-        static_cast<float>(markerSize),
+        squareLength,
+        markerLength,
         dict
     );
 
     // Generate board image
     cv::Mat boardImage;
-    int imageWidth = squaresX * squareSize;
-    int imageHeight = squaresY * squareSize;
+    int imageWidth = squaresX * imageSquareSizePixels;
+    int imageHeight = squaresY * imageSquareSizePixels;
     board.generateImage(cv::Size(imageWidth, imageHeight), boardImage, 10, 1);
 
     return boardImage;
@@ -193,8 +200,9 @@ void CalibrationService::registerRoutes(drogon::HttpAppFramework& app) {
            std::function<void(const HttpResponsePtr&)>&& callback) {
             int squaresX = 7;
             int squaresY = 5;
-            int squareSize = 100;
-            int markerSize = 80;
+            float squareLength = 0.04f;
+            float markerLength = 0.03f;
+            std::string dictionary = "DICT_6X6_50";
 
             std::string param;
             param = req->getParameter("squaresX");
@@ -205,16 +213,20 @@ void CalibrationService::registerRoutes(drogon::HttpAppFramework& app) {
             if (!param.empty()) {
                 squaresY = std::stoi(param);
             }
-            param = req->getParameter("squareSize");
+            param = req->getParameter("squareLength");
             if (!param.empty()) {
-                squareSize = std::stoi(param);
+                squareLength = std::stof(param);
             }
-            param = req->getParameter("markerSize");
+            param = req->getParameter("markerLength");
             if (!param.empty()) {
-                markerSize = std::stoi(param);
+                markerLength = std::stof(param);
+            }
+            param = req->getParameter("dictionary");
+            if (!param.empty()) {
+                dictionary = param;
             }
 
-            cv::Mat board = generateBoard(squaresX, squaresY, squareSize, markerSize);
+            cv::Mat board = generateBoard(squaresX, squaresY, squareLength, markerLength, 100, dictionary);
 
             // Encode as PNG
             std::vector<uchar> buffer;
