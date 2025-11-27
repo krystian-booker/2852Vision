@@ -22,7 +22,7 @@ public:
     virtual ~BaseDriver() = default;
 
     // Connect to the camera
-    virtual bool connect() = 0;
+    virtual bool connect(bool silent = false) = 0;
 
     // Disconnect from the camera
     virtual void disconnect() = 0;

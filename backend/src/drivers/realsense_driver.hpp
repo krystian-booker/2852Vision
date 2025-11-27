@@ -14,7 +14,7 @@ public:
     explicit RealSenseDriver(const Camera& camera);
     ~RealSenseDriver() override;
 
-    bool connect() override;
+    bool connect(bool silent = false) override;
     void disconnect() override;
     bool isConnected() const override;
     FrameResult getFrame() override;

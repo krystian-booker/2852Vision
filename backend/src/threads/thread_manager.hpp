@@ -69,6 +69,9 @@ public:
     // Get camera ID
     int cameraId() const { return camera_.id; }
 
+    // Get camera object
+    const Camera& getCamera() const { return camera_; }
+
 private:
     void run();
     void applyOrientation(cv::Mat& frame);
@@ -145,6 +148,12 @@ public:
     bool startCamera(const Camera& camera);
     void stopCamera(int cameraId);
     bool isCameraRunning(int cameraId);
+
+    // Restart camera with new settings (if running)
+    void restartCamera(const Camera& newCamera);
+
+    // Execute an action with the camera temporarily paused
+    void executeWithCameraPaused(int cameraId, std::function<void()> action);
 
     // Start/stop pipeline thread
     bool startPipeline(const Pipeline& pipeline, int cameraId);

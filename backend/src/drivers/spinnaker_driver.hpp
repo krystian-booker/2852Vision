@@ -41,7 +41,7 @@ public:
     ~SpinnakerDriver() override;
 
     // BaseDriver interface
-    bool connect() override;
+    bool connect(bool silent = false) override;
     void disconnect() override;
     bool isConnected() const override;
     FrameResult getFrame() override;

@@ -119,12 +119,20 @@ void CameraThread::run() {
     static constexpr int INITIAL_FRAME_TIMEOUT_MS = 5000;  // 5 seconds to get first frame
     static constexpr int LOG_INTERVAL = 100;  // Log every 100 frames
 
+    bool connectionErrorLogged = false;
+
     while (running_.load()) {
         // Try to connect if not connected
         if (!driver_->isConnected()) {
-             if (driver_->connect()) {
+             if (driver_->connect(connectionErrorLogged)) {
                  spdlog::info("Connected to camera {}", camera_.id);
+                 connectionErrorLogged = false;
              } else {
+                 if (!connectionErrorLogged) {
+                     // First failure is already logged by driver (silent=false)
+                     connectionErrorLogged = true;
+                 }
+                 
                  // Publish placeholder while connecting
                  if (totalFrameCount % 10 == 0) { // Limit frequency
                      cv::Mat placeholder = cv::Mat::zeros(480, 640, CV_8UC3);
@@ -390,6 +398,95 @@ bool ThreadManager::isCameraRunning(int cameraId) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = cameraThreads_.find(cameraId);
     return it != cameraThreads_.end() && it->second->isRunning();
+}
+
+void ThreadManager::executeWithCameraPaused(int cameraId, std::function<void()> action) {
+    Camera camera;
+    bool wasRunning = false;
+    std::vector<std::pair<int, std::shared_ptr<FrameQueue>>> queuesToRestore;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = cameraThreads_.find(cameraId);
+        if (it != cameraThreads_.end() && it->second->isRunning()) {
+            wasRunning = true;
+            camera = it->second->getCamera();
+
+            // Find all pipelines for this camera and their queues
+            for (auto const& [pipelineId, camId] : pipelineToCameraMap_) {
+                if (camId == cameraId) {
+                    auto qIt = pipelineQueues_.find(pipelineId);
+                    if (qIt != pipelineQueues_.end()) {
+                        queuesToRestore.push_back({pipelineId, qIt->second});
+                    }
+                }
+            }
+
+            // Stop camera
+            it->second->stop();
+            cameraThreads_.erase(it);
+        }
+    }
+
+    // Execute action (without lock)
+    action();
+
+    if (wasRunning) {
+        // Restart camera
+        if (startCamera(camera)) {
+             std::lock_guard<std::mutex> lock(mutex_);
+             auto it = cameraThreads_.find(cameraId);
+             if (it != cameraThreads_.end()) {
+                 for (const auto& [pipelineId, queue] : queuesToRestore) {
+                     it->second->registerQueue(pipelineId, queue);
+                 }
+             }
+        }
+    }
+}
+
+
+void ThreadManager::restartCamera(const Camera& newCamera) {
+    int cameraId = newCamera.id;
+    bool wasRunning = false;
+    std::vector<std::pair<int, std::shared_ptr<FrameQueue>>> queuesToRestore;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = cameraThreads_.find(cameraId);
+        if (it != cameraThreads_.end()) {
+            // Only restart if it was actually running (or at least the thread object existed)
+            wasRunning = true;
+
+            // Find all pipelines for this camera and their queues
+            for (auto const& [pipelineId, camId] : pipelineToCameraMap_) {
+                if (camId == cameraId) {
+                    auto qIt = pipelineQueues_.find(pipelineId);
+                    if (qIt != pipelineQueues_.end()) {
+                        queuesToRestore.push_back({pipelineId, qIt->second});
+                    }
+                }
+            }
+
+            // Stop camera
+            it->second->stop();
+            cameraThreads_.erase(it);
+        }
+    }
+
+    if (wasRunning) {
+        // Restart camera with NEW settings
+        if (startCamera(newCamera)) {
+             std::lock_guard<std::mutex> lock(mutex_);
+             auto it = cameraThreads_.find(cameraId);
+             if (it != cameraThreads_.end()) {
+                 for (const auto& [pipelineId, queue] : queuesToRestore) {
+                     it->second->registerQueue(pipelineId, queue);
+                 }
+             }
+             spdlog::info("Restarted camera {} with new settings", cameraId);
+        }
+    }
 }
 
 bool ThreadManager::startPipeline(const Pipeline& pipeline, int cameraId) {

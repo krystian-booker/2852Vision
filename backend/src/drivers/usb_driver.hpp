@@ -13,7 +13,7 @@ public:
     explicit USBDriver(const Camera& camera);
     ~USBDriver() override;
 
-    bool connect() override;
+    bool connect(bool silent = false) override;
     void disconnect() override;
     bool isConnected() const override;
     FrameResult getFrame() override;
@@ -36,7 +36,7 @@ private:
     cv::VideoCapture cap_;
     
     // Helper methods
-    int findDeviceIndex() const;
+    int findDeviceIndex(bool silent = false) const;
 };
 
 } // namespace vision

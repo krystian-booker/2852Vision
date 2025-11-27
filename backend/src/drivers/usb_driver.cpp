@@ -204,14 +204,16 @@ USBDriver::~USBDriver() {
     disconnect();
 }
 
-bool USBDriver::connect() {
+bool USBDriver::connect(bool silent) {
     if (isConnected()) {
         return true;
     }
 
-    int deviceIndex = findDeviceIndex();
+    int deviceIndex = findDeviceIndex(silent);
     if (deviceIndex < 0) {
-        spdlog::error("Could not find device index for camera '{}'", camera_.identifier);
+        if (!silent) {
+            spdlog::error("Could not find device index for camera '{}'", camera_.identifier);
+        }
         return false;
     }
 
@@ -222,7 +224,9 @@ bool USBDriver::connect() {
 #else
     if (!cap_.open(deviceIndex, cv::CAP_ANY)) {
 #endif
-        spdlog::error("Failed to open USB camera '{}' at index {}", camera_.name, deviceIndex);
+        if (!silent) {
+            spdlog::error("Failed to open USB camera '{}' at index {}", camera_.name, deviceIndex);
+        }
         return false;
     }
 
@@ -325,7 +329,7 @@ int USBDriver::getGain() const {
     return static_cast<int>(cap_.get(cv::CAP_PROP_GAIN));
 }
 
-int USBDriver::findDeviceIndex() const {
+int USBDriver::findDeviceIndex(bool silent) const {
     // If identifier is an integer, use it directly (legacy support)
     try {
         return std::stoi(camera_.identifier);
@@ -345,8 +349,10 @@ int USBDriver::findDeviceIndex() const {
             }
         }
 #endif
-        spdlog::warn("Camera identifier '{}' not found, defaulting to index 0", camera_.identifier);
-        return 0;
+        if (!silent) {
+            spdlog::error("Camera identifier '{}' not found", camera_.identifier);
+        }
+        return -1;
     }
 }
 

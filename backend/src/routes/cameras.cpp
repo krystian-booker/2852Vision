@@ -112,7 +112,21 @@ void CamerasController::registerRoutes(drogon::HttpAppFramework& app) {
             if (typeStr == "Spinnaker") type = CameraType::Spinnaker;
             else if (typeStr == "RealSense") type = CameraType::RealSense;
 
-            auto profiles = CameraService::instance().getCameraProfiles(identifier, type);
+            std::vector<CameraProfile> profiles;
+            
+            // Check if camera exists in DB to potentially pause it
+            auto cameraOpt = CameraService::instance().getCameraByIdentifier(identifier);
+            if (cameraOpt) {
+                // If camera exists, use executeWithCameraPaused to safely query
+                // This handles stopping/restarting the camera thread if it's running
+                ThreadManager::instance().executeWithCameraPaused(cameraOpt->id, [&]() {
+                    profiles = CameraService::instance().getCameraProfiles(identifier, type);
+                });
+            } else {
+                // Camera not in DB, just query directly
+                profiles = CameraService::instance().getCameraProfiles(identifier, type);
+            }
+
             json result = json::array();
             for (const auto& profile : profiles) {
                 result.push_back(profile.toJson());
@@ -204,6 +218,12 @@ void CamerasController::registerRoutes(drogon::HttpAppFramework& app) {
                     int framerate = body["framerate"].get<int>();
 
                     if (CameraService::instance().updateCameraSettings(id, name, resolutionJson, framerate)) {
+                        // Restart camera to apply new settings (if running)
+                        auto updatedCamera = CameraService::instance().getCameraById(id);
+                        if (updatedCamera) {
+                            ThreadManager::instance().restartCamera(*updatedCamera);
+                        }
+
                         auto resp = HttpResponse::newHttpResponse();
                         resp->setStatusCode(k200OK);
                         resp->setContentTypeCode(CT_APPLICATION_JSON);

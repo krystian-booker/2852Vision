@@ -17,7 +17,7 @@ bool RealSenseDriver::isAvailable() {
     return true;
 }
 
-bool RealSenseDriver::connect() {
+bool RealSenseDriver::connect(bool silent) {
     if (connected_) {
         return true;
     }
