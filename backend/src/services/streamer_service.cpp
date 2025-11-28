@@ -154,7 +154,7 @@ void StreamerService::workerLoop() {
                 cv::Point textOrg(frameToEncode->cols - textSize.width - 10, textSize.height + 10);
                 
                 // Draw FPS
-                cv::putText(*frameToEncode, fpsText, textOrg, fontFace, fontScale, cv::Scalar(255, 255, 255), thickness);
+                cv::putText(*frameToEncode, fpsText, textOrg, fontFace, fontScale, cv::Scalar(0, 255, 0), thickness);
             }
             // -----------------------------------
 

@@ -173,8 +173,12 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
         validDetections.push_back(std::move(data));
     }
 
-    // Clone frame only once for annotation
-    result.annotatedFrame = frame.clone();
+    // Clone frame for annotation, ensuring it's BGR for colored drawing
+    if (frame.channels() == 1) {
+        cv::cvtColor(frame, result.annotatedFrame, cv::COLOR_GRAY2BGR);
+    } else {
+        result.annotatedFrame = frame.clone();
+    }
 
     // Process and draw each valid detection
     for (const auto& data : validDetections) {
@@ -213,12 +217,13 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
         if (hasCalibration_) {
             // 3D Object Points for the tag (centered at origin, z=0)
             // Order: bottom-left, bottom-right, top-right, top-left (CCW)
+            // Note: In camera coordinates (Y-down), Bottom-Left is (-half, +half)
             double halfSize = config_.tag_size_m / 2.0;
             std::vector<cv::Point3f> objectPoints = {
-                cv::Point3f(-halfSize, -halfSize, 0),
-                cv::Point3f( halfSize, -halfSize, 0),
-                cv::Point3f( halfSize,  halfSize, 0),
-                cv::Point3f(-halfSize,  halfSize, 0)
+                cv::Point3f(-halfSize,  halfSize, 0), // Bottom-Left
+                cv::Point3f( halfSize,  halfSize, 0), // Bottom-Right
+                cv::Point3f( halfSize, -halfSize, 0), // Top-Right
+                cv::Point3f(-halfSize, -halfSize, 0)  // Top-Left
             };
 
             // Image Points from detection
@@ -288,8 +293,40 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
                 }
                 detection["rotation"] = rotation;
 
-                // Draw pose axes
-                cv::drawFrameAxes(result.annotatedFrame, cameraMatrix_, distCoeffs_, rvec, tvec, config_.tag_size_m * 0.5);
+                // Draw 3D Cube
+                // Define 3D points for the cube
+                // Base points (Z=0) - same as objectPoints
+                // Top points (Z=-tag_size) - extruding "into" the tag (or out depending on convention)
+                double size = config_.tag_size_m;
+                std::vector<cv::Point3f> cubePoints = {
+                    // Base (Z=0)
+                    cv::Point3f(-halfSize, -halfSize, 0),
+                    cv::Point3f( halfSize, -halfSize, 0),
+                    cv::Point3f( halfSize,  halfSize, 0),
+                    cv::Point3f(-halfSize,  halfSize, 0),
+                    // Top (Z=-size)
+                    cv::Point3f(-halfSize, -halfSize, -size),
+                    cv::Point3f( halfSize, -halfSize, -size),
+                    cv::Point3f( halfSize,  halfSize, -size),
+                    cv::Point3f(-halfSize,  halfSize, -size)
+                };
+
+                std::vector<cv::Point2f> imagePointsCube;
+                cv::projectPoints(cubePoints, rvec, tvec, cameraMatrix_, distCoeffs_, imagePointsCube);
+
+                // Draw lines
+                cv::Scalar cubeColor(0, 255, 0);
+                int thickness = 2;
+
+                // Pillars
+                for (int i = 0; i < 4; i++) {
+                    cv::line(result.annotatedFrame, imagePointsCube[i], imagePointsCube[i+4], cubeColor, thickness);
+                }
+
+                // Top face
+                for (int i = 0; i < 4; i++) {
+                    cv::line(result.annotatedFrame, imagePointsCube[i+4], imagePointsCube[((i+1)%4)+4], cubeColor, thickness);
+                }
             }
         }
 
@@ -298,12 +335,6 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
 
     // Cleanup detections
     apriltag_detections_destroy(detections);
-
-    // Draw detection count
-    cv::putText(result.annotatedFrame,
-                "Tags: " + std::to_string(result.detections.size()),
-                cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
-                cv::Scalar(0, 255, 0), 2);
 
     auto endTime = std::chrono::high_resolution_clock::now();
     result.processingTimeMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
@@ -375,10 +406,10 @@ std::vector<cv::Point3f> AprilTagPipeline::getTagCornersInField(int tagId) const
     // Order: bottom-left, bottom-right, top-right, top-left (CCW from camera view)
     double halfSize = config_.tag_size_m / 2.0;
     std::vector<Eigen::Vector3d> localCorners = {
-        {-halfSize, -halfSize, 0.0},  // Bottom-left
-        { halfSize, -halfSize, 0.0},  // Bottom-right
-        { halfSize,  halfSize, 0.0},  // Top-right
-        {-halfSize,  halfSize, 0.0}   // Top-left
+        {-halfSize,  halfSize, 0.0},  // Bottom-left
+        { halfSize,  halfSize, 0.0},  // Bottom-right
+        { halfSize, -halfSize, 0.0},  // Top-right
+        {-halfSize, -halfSize, 0.0}   // Top-left
     };
 
     // Transform corners to field coordinates
