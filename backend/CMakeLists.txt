@@ -19,7 +19,6 @@ find_package(nlohmann_json REQUIRED)
 find_package(SQLiteCpp REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(Eigen3 REQUIRED)
-find_package(realsense2 REQUIRED)
 find_package(onnxruntime REQUIRED)
 find_package(fmt REQUIRED)
 
@@ -45,7 +44,6 @@ target_link_libraries(backend PRIVATE
     SQLiteCpp
     spdlog::spdlog
     Eigen3::Eigen
-    realsense2::realsense2
     onnxruntime::onnxruntime
     apriltag
     ntcore
@@ -61,14 +59,30 @@ else()
     target_link_libraries(backend PRIVATE pthread dl)
 endif()
 
-# Spinnaker SDK Support
+# RealSense SDK Support (optional)
+find_package(RealSense)
+if(RealSense_FOUND)
+    target_compile_definitions(backend PRIVATE VISION_WITH_REALSENSE)
+    target_include_directories(backend PRIVATE ${REALSENSE_INCLUDE_DIRS})
+    target_link_directories(backend PRIVATE ${REALSENSE_LIBRARY_DIRS})
+    target_link_libraries(backend PRIVATE ${REALSENSE_LIBRARIES})
+
+    if(WIN32)
+        # Delay load RealSense DLL
+        target_link_options(backend PRIVATE "/DELAYLOAD:realsense2.dll")
+    endif()
+else()
+    message(STATUS "RealSense SDK not found. Building without RealSense support.")
+endif()
+
+# Spinnaker SDK Support (optional)
 find_package(Spinnaker)
 if(Spinnaker_FOUND)
     target_compile_definitions(backend PRIVATE VISION_WITH_SPINNAKER)
     target_include_directories(backend PRIVATE ${SPINNAKER_INCLUDE_DIRS})
     target_link_directories(backend PRIVATE ${SPINNAKER_LIBRARY_DIRS})
     target_link_libraries(backend PRIVATE ${SPINNAKER_LIBRARIES})
-    
+
     if(WIN32)
         # Delay load Spinnaker DLL
         target_link_options(backend PRIVATE "/DELAYLOAD:Spinnaker_v140.dll")

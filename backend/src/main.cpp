@@ -9,6 +9,7 @@
 #include "services/camera_service.hpp"
 #include "services/pipeline_service.hpp"
 #include "services/streamer_service.hpp"
+#include "drivers/realsense_driver.hpp"
 #include "drivers/spinnaker_driver.hpp"
 #include "threads/thread_manager.hpp"
 
@@ -39,7 +40,8 @@ int main(int argc, char** argv) {
     // Initialize database
     vision::Database::instance().initialize(config.database_path);
 
-    // Initialize Spinnaker SDK for FLIR camera support
+    // Initialize camera SDK support
+    vision::RealSenseDriver::initialize();
     vision::SpinnakerDriver::initialize();
 
     // Initialize MJPEG Streamer
@@ -97,8 +99,9 @@ int main(int argc, char** argv) {
     // Shutdown threads on exit
     vision::ThreadManager::instance().shutdown();
 
-    // Shutdown Spinnaker SDK
+    // Shutdown camera SDKs
     vision::SpinnakerDriver::shutdown();
+    vision::RealSenseDriver::shutdown();
 
     return 0;
 }

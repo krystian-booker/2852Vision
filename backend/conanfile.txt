@@ -5,7 +5,6 @@ nlohmann_json/3.11.3
 sqlitecpp/3.3.3
 spdlog/1.16.0
 eigen/3.4.0
-librealsense/2.56.5
 onnxruntime/1.18.1
 
 [generators]
