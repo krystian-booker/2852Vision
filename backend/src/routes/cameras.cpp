@@ -210,47 +210,67 @@ void CamerasController::registerRoutes(drogon::HttpAppFramework& app) {
            int id) {
             try {
                 auto body = json::parse(req->getBody());
-                std::string name = body.at("name").get<std::string>();
+                
+                // Fetch existing camera
+                auto cameraOpt = CameraService::instance().getCameraById(id);
+                if (!cameraOpt) {
+                    auto resp = HttpResponse::newHttpResponse();
+                    resp->setStatusCode(k404NotFound);
+                    resp->setContentTypeCode(CT_APPLICATION_JSON);
+                    resp->setBody(R"({"error": "Camera not found"})");
+                    callback(resp);
+                    return;
+                }
+                
+                Camera& camera = *cameraOpt;
+                bool needsRestart = false;
 
-                // Check if resolution and framerate are provided
-                if (body.contains("resolution") && body.contains("framerate")) {
-                    std::string resolutionJson = body["resolution"].dump();
-                    int framerate = body["framerate"].get<int>();
-
-                    if (CameraService::instance().updateCameraSettings(id, name, resolutionJson, framerate)) {
-                        // Restart camera to apply new settings (if running)
-                        auto updatedCamera = CameraService::instance().getCameraById(id);
-                        if (updatedCamera) {
-                            ThreadManager::instance().restartCamera(*updatedCamera);
-                        }
-
-                        auto resp = HttpResponse::newHttpResponse();
-                        resp->setStatusCode(k200OK);
-                        resp->setContentTypeCode(CT_APPLICATION_JSON);
-                        resp->setBody(R"({"success": true})");
-                        callback(resp);
-                    } else {
-                        auto resp = HttpResponse::newHttpResponse();
-                        resp->setStatusCode(k404NotFound);
-                        resp->setContentTypeCode(CT_APPLICATION_JSON);
-                        resp->setBody(R"({"error": "Camera not found"})");
-                        callback(resp);
+                // Update fields if present
+                if (body.contains("name")) {
+                    camera.name = body["name"].get<std::string>();
+                }
+                
+                if (body.contains("resolution")) {
+                    std::string newRes = body["resolution"].dump();
+                    if (camera.resolution_json != newRes) {
+                        camera.resolution_json = newRes;
+                        needsRestart = true;
                     }
+                }
+                
+                if (body.contains("framerate")) {
+                    int newFps = body["framerate"].get<int>();
+                    if (camera.framerate != newFps) {
+                        camera.framerate = newFps;
+                        needsRestart = true;
+                    }
+                }
+
+                if (body.contains("camera_matrix")) {
+                    camera.camera_matrix_json = body["camera_matrix"].dump();
+                }
+
+                if (body.contains("dist_coeffs")) {
+                    camera.dist_coeffs_json = body["dist_coeffs"].dump();
+                }
+
+                if (CameraService::instance().updateCamera(camera)) {
+                    // Restart camera if resolution/framerate changed
+                    if (needsRestart) {
+                         ThreadManager::instance().restartCamera(camera);
+                    }
+
+                    auto resp = HttpResponse::newHttpResponse();
+                    resp->setStatusCode(k200OK);
+                    resp->setContentTypeCode(CT_APPLICATION_JSON);
+                    resp->setBody(R"({"success": true})");
+                    callback(resp);
                 } else {
-                    // Only update name (backwards compatibility)
-                    if (CameraService::instance().updateCameraName(id, name)) {
-                        auto resp = HttpResponse::newHttpResponse();
-                        resp->setStatusCode(k200OK);
-                        resp->setContentTypeCode(CT_APPLICATION_JSON);
-                        resp->setBody(R"({"success": true})");
-                        callback(resp);
-                    } else {
-                        auto resp = HttpResponse::newHttpResponse();
-                        resp->setStatusCode(k404NotFound);
-                        resp->setContentTypeCode(CT_APPLICATION_JSON);
-                        resp->setBody(R"({"error": "Camera not found"})");
-                        callback(resp);
-                    }
+                    auto resp = HttpResponse::newHttpResponse();
+                    resp->setStatusCode(k500InternalServerError);
+                    resp->setContentTypeCode(CT_APPLICATION_JSON);
+                    resp->setBody(R"({"error": "Failed to update camera"})");
+                    callback(resp);
                 }
             } catch (const std::exception& e) {
                 auto resp = HttpResponse::newHttpResponse();

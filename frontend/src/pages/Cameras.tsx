@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Camera as CameraIcon, Plus, Edit2, Trash2, RefreshCw } from 'lucide-react'
+import { Camera as CameraIcon, Plus, Edit2, Trash2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -62,6 +62,11 @@ export default function Cameras() {
   const [editAvailableProfiles, setEditAvailableProfiles] = useState<CameraProfile[]>([])
   const [editSelectedProfile, setEditSelectedProfile] = useState<string>('')
   const [isLoadingEditProfiles, setIsLoadingEditProfiles] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+
+  // Advanced params state
+  const [matrixParams, setMatrixParams] = useState({ fx: 0, fy: 0, cx: 0, cy: 0 })
+  const [distParams, setDistParams] = useState({ k1: 0, k2: 0, p1: 0, p2: 0, k3: 0 })
 
   // Fetch cameras on mount
   useEffect(() => {
@@ -301,6 +306,8 @@ export default function Cameras() {
         name: string
         resolution?: { width: number; height: number }
         framerate?: number
+        camera_matrix?: any
+        dist_coeffs?: any
       } = {
         name: editCameraName,
       }
@@ -318,6 +325,24 @@ export default function Cameras() {
         }
       }
 
+      // Construct Camera Matrix
+      const cameraMatrix = [
+        [Number(matrixParams.fx), 0, Number(matrixParams.cx)],
+        [0, Number(matrixParams.fy), Number(matrixParams.cy)],
+        [0, 0, 1]
+      ]
+      updateData.camera_matrix = cameraMatrix
+
+      // Construct Distortion Coefficients
+      const distCoeffs = [
+        Number(distParams.k1),
+        Number(distParams.k2),
+        Number(distParams.p1),
+        Number(distParams.p2),
+        Number(distParams.k3)
+      ]
+      updateData.dist_coeffs = distCoeffs
+
       await api.post(`/api/cameras/update/${selectedCamera.id}`, updateData)
 
       // Update local state
@@ -325,6 +350,12 @@ export default function Cameras() {
       if (updateData.resolution && updateData.framerate) {
         updatedCameraData.resolution_json = JSON.stringify(updateData.resolution)
         updatedCameraData.framerate = updateData.framerate
+      }
+      if (updateData.camera_matrix) {
+        updatedCameraData.camera_matrix_json = JSON.stringify(updateData.camera_matrix)
+      }
+      if (updateData.dist_coeffs) {
+        updatedCameraData.dist_coeffs_json = JSON.stringify(updateData.dist_coeffs)
       }
       updateCamera(selectedCamera.id, updatedCameraData)
 
@@ -338,6 +369,9 @@ export default function Cameras() {
       setEditCameraName('')
       setEditAvailableProfiles([])
       setEditSelectedProfile('')
+      setAdvancedOpen(false)
+      setMatrixParams({ fx: 0, fy: 0, cx: 0, cy: 0 })
+      setDistParams({ k1: 0, k2: 0, p1: 0, p2: 0, k3: 0 })
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -378,6 +412,42 @@ export default function Cameras() {
     setSelectedCamera(camera)
     setEditCameraName(camera.name)
     setEditModalOpen(true)
+    setAdvancedOpen(false)
+
+    // Parse Camera Matrix
+    try {
+      const matrix = camera.camera_matrix_json ? JSON.parse(camera.camera_matrix_json) : null
+      if (matrix && Array.isArray(matrix) && matrix.length === 3) {
+        setMatrixParams({
+          fx: matrix[0][0] || 0,
+          fy: matrix[1][1] || 0,
+          cx: matrix[0][2] || 0,
+          cy: matrix[1][2] || 0
+        })
+      } else {
+        setMatrixParams({ fx: 0, fy: 0, cx: 0, cy: 0 })
+      }
+    } catch {
+      setMatrixParams({ fx: 0, fy: 0, cx: 0, cy: 0 })
+    }
+
+    // Parse Distortion Coefficients
+    try {
+      const dist = camera.dist_coeffs_json ? JSON.parse(camera.dist_coeffs_json) : null
+      if (dist && Array.isArray(dist) && dist.length >= 5) {
+        setDistParams({
+          k1: dist[0] || 0,
+          k2: dist[1] || 0,
+          p1: dist[2] || 0,
+          p2: dist[3] || 0,
+          k3: dist[4] || 0
+        })
+      } else {
+        setDistParams({ k1: 0, k2: 0, p1: 0, p2: 0, k3: 0 })
+      }
+    } catch {
+      setDistParams({ k1: 0, k2: 0, p1: 0, p2: 0, k3: 0 })
+    }
 
     // Load available profiles for this camera
     setIsLoadingEditProfiles(true)
@@ -698,6 +768,130 @@ export default function Cameras() {
                 </Select>
               ) : (
                 <p className="text-sm text-muted">No profiles available for this camera</p>
+              )}
+            </div>
+
+            {/* Advanced Settings */}
+            <div className="pt-2">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 py-2 text-sm text-muted hover:text-[var(--color-text)] transition-colors"
+                onClick={() => setAdvancedOpen(!advancedOpen)}
+              >
+                {advancedOpen ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+                <span>Advanced Settings</span>
+              </button>
+
+              {advancedOpen && (
+                <div className="space-y-6 pt-3 pb-1 animate-in slide-in-from-top-2 duration-200">
+                  {/* Camera Matrix */}
+                  <div className="space-y-3">
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-muted">Camera Matrix</Label>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="fx" className="text-xs text-subtle">Focal Length X (fx)</Label>
+                        <Input
+                          id="fx"
+                          type="number"
+                          value={matrixParams.fx}
+                          onChange={(e) => setMatrixParams({ ...matrixParams, fx: parseFloat(e.target.value) })}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="fy" className="text-xs text-subtle">Focal Length Y (fy)</Label>
+                        <Input
+                          id="fy"
+                          type="number"
+                          value={matrixParams.fy}
+                          onChange={(e) => setMatrixParams({ ...matrixParams, fy: parseFloat(e.target.value) })}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="cx" className="text-xs text-subtle">Principal Point X (cx)</Label>
+                        <Input
+                          id="cx"
+                          type="number"
+                          value={matrixParams.cx}
+                          onChange={(e) => setMatrixParams({ ...matrixParams, cx: parseFloat(e.target.value) })}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="cy" className="text-xs text-subtle">Principal Point Y (cy)</Label>
+                        <Input
+                          id="cy"
+                          type="number"
+                          value={matrixParams.cy}
+                          onChange={(e) => setMatrixParams({ ...matrixParams, cy: parseFloat(e.target.value) })}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Distortion Coefficients */}
+                  <div className="space-y-3">
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-muted">Distortion Coefficients</Label>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="k1" className="text-xs text-subtle">k1</Label>
+                        <Input
+                          id="k1"
+                          type="number"
+                          value={distParams.k1}
+                          onChange={(e) => setDistParams({ ...distParams, k1: parseFloat(e.target.value) })}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="k2" className="text-xs text-subtle">k2</Label>
+                        <Input
+                          id="k2"
+                          type="number"
+                          value={distParams.k2}
+                          onChange={(e) => setDistParams({ ...distParams, k2: parseFloat(e.target.value) })}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="p1" className="text-xs text-subtle">p1</Label>
+                        <Input
+                          id="p1"
+                          type="number"
+                          value={distParams.p1}
+                          onChange={(e) => setDistParams({ ...distParams, p1: parseFloat(e.target.value) })}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="p2" className="text-xs text-subtle">p2</Label>
+                        <Input
+                          id="p2"
+                          type="number"
+                          value={distParams.p2}
+                          onChange={(e) => setDistParams({ ...distParams, p2: parseFloat(e.target.value) })}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="k3" className="text-xs text-subtle">k3</Label>
+                        <Input
+                          id="k3"
+                          type="number"
+                          value={distParams.k3}
+                          onChange={(e) => setDistParams({ ...distParams, k3: parseFloat(e.target.value) })}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           </div>
