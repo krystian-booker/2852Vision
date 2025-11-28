@@ -593,6 +593,20 @@ bool ThreadManager::isPipelineRunning(int pipelineId) {
     return it != visionThreads_.end() && it->second->isRunning();
 }
 
+void ThreadManager::updateCalibration(int cameraId, const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    for (const auto& [pipelineId, camId] : pipelineToCameraMap_) {
+        if (camId != cameraId) continue;
+
+        auto it = visionThreads_.find(pipelineId);
+        if (it != visionThreads_.end() && it->second->isRunning()) {
+            it->second->getProcessor()->setCalibration(cameraMatrix, distCoeffs);
+            spdlog::info("Updated calibration for running pipeline {} (camera {})", pipelineId, cameraId);
+        }
+    }
+}
+
 FramePtr ThreadManager::getCameraFrame(int cameraId) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = cameraThreads_.find(cameraId);

@@ -163,6 +163,9 @@ public:
     void stopPipeline(int pipelineId);
     bool isPipelineRunning(int pipelineId);
 
+    // Update calibration for all pipelines associated with a camera
+    void updateCalibration(int cameraId, const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs);
+
     // Get frames for streaming
     FramePtr getCameraFrame(int cameraId);
     FramePtr getPipelineFrame(int pipelineId);

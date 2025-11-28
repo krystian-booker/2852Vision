@@ -391,6 +391,30 @@ void CalibrationService::registerRoutes(drogon::HttpAppFramework& app) {
                 );
 
                 if (success) {
+                    // Push calibration to any running pipelines for this camera
+                    try {
+                        auto matrixJson = body["camera_matrix"];
+                        cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
+                        if (matrixJson.is_array() && matrixJson.size() == 3) {
+                            for (int r = 0; r < 3; r++) {
+                                for (int c = 0; c < 3; c++) {
+                                    cameraMatrix.at<double>(r, c) = matrixJson[r][c].get<double>();
+                                }
+                            }
+                        }
+
+                        auto distJson = body["dist_coeffs"];
+                        cv::Mat distCoeffs = cv::Mat::zeros(static_cast<int>(distJson.size()), 1, CV_64F);
+                        for (size_t i = 0; i < distJson.size(); i++) {
+                            distCoeffs.at<double>(static_cast<int>(i)) = distJson[i].get<double>();
+                        }
+
+                        ThreadManager::instance().updateCalibration(cameraId, cameraMatrix, distCoeffs);
+                    } catch (const std::exception& e) {
+                        spdlog::warn("Failed to push calibration to running pipelines: {}", e.what());
+                        // Don't fail the request - calibration was saved to DB successfully
+                    }
+
                     auto resp = HttpResponse::newHttpResponse();
                     resp->setStatusCode(k200OK);
                     resp->setContentTypeCode(CT_APPLICATION_JSON);

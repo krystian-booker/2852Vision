@@ -13,8 +13,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
-import { Plus, Edit2, Trash2 } from 'lucide-react'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Plus, Edit2, Trash2, TriangleAlert } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { Link } from 'react-router-dom'
 
 // Default configurations
 const APRILTAG_DEFAULTS: PipelineConfig = {
@@ -499,6 +501,23 @@ export default function Dashboard() {
           </span>
         </div>
       </div>
+
+      {/* Calibration Warning */}
+      {selectedCameraId &&
+        cameras.find((c) => c.id.toString() === selectedCameraId) &&
+        !cameras.find((c) => c.id.toString() === selectedCameraId)?.camera_matrix_json && (
+          <Alert variant="destructive" className="bg-red-600 text-white border-red-700 [&>svg]:text-white">
+            <TriangleAlert className="h-4 w-4" />
+            <AlertTitle>Camera Uncalibrated</AlertTitle>
+            <AlertDescription>
+              The selected camera has not been calibrated. Please go to the{' '}
+              <Link to="/calibration" className="underline font-medium hover:text-white/80">
+                calibration page
+              </Link>{' '}
+              to calibrate it for accurate results.
+            </AlertDescription>
+          </Alert>
+        )}
 
       {/* Main Content: Setup and Live Feed */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
