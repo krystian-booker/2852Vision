@@ -294,9 +294,6 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
                 detection["rotation"] = rotation;
 
                 // Draw 3D Cube
-                // Define 3D points for the cube
-                // Base points (Z=0) - same as objectPoints
-                // Top points (Z=-tag_size) - extruding "into" the tag (or out depending on convention)
                 double size = config_.tag_size_m;
                 std::vector<cv::Point3f> cubePoints = {
                     // Base (Z=0)
