@@ -422,7 +422,9 @@ export default function Dashboard() {
     if (!selectedCameraId || !selectedPipelineId) return
     try {
       const data = await api.get<any>(`/api/cameras/results/${selectedCameraId}`)
-      const pipelineResults = data?.[selectedPipelineId]
+      const pipelineResults = Array.isArray(data)
+        ? data.find((r: any) => String(r.pipeline_id) === String(selectedPipelineId))
+        : data?.[selectedPipelineId]
       if (!pipelineResults) {
         setResults({ apriltag: [], ml: [], multiTag: null })
         return
