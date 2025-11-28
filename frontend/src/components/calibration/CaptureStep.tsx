@@ -7,13 +7,13 @@ import { ScrollArea } from '../ui/scroll-area';
 import { Trash2, Camera as CameraIcon, CheckCircle, AlertCircle, HelpCircle } from 'lucide-react';
 import type { BoardConfig } from './BoardConfig';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
+import { MJPEGStream } from '../shared/MJPEGStream';
 
 interface Detection {
     id: string;
     image: string; // base64
     debugImage?: string; // base64 with corners drawn
-    charucoCorners: any[];
-    charucoIds: any[];
+    corners: any[]; // {id, x, y}
     imageSize: [number, number];
 }
 
@@ -52,31 +52,16 @@ export function CaptureStep({
     const streamUrl = `http://${window.location.hostname}:5805/camera/${cameraId}`;
 
     const handleCapture = async () => {
-        if (!imgRef.current || !canvasRef.current) return;
-
         setIsCapturing(true);
         setLastError(null);
 
         try {
-            const img = imgRef.current;
-            const canvas = canvasRef.current;
-            canvas.width = img.naturalWidth;
-            canvas.height = img.naturalHeight;
-
-            const ctx = canvas.getContext('2d');
-            if (!ctx) throw new Error("Could not get canvas context");
-
-            // Draw the current frame to canvas
-            ctx.drawImage(img, 0, 0);
-
-            const dataUrl = canvas.toDataURL('image/jpeg');
-
             // Send to backend for detection
             const response = await fetch('/api/calibration/detect', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    image: dataUrl,
+                    camera_id: cameraId,
                     ...boardConfig
                 })
             });
@@ -87,21 +72,20 @@ export function CaptureStep({
                 throw new Error(result.error || "Detection failed");
             }
 
-            if (result.detected) {
+            if (result.success) {
                 const newDetection: Detection = {
                     id: Date.now().toString(),
-                    image: dataUrl,
-                    debugImage: result.debugImage,
-                    charucoCorners: result.detectionData.charucoCorners,
-                    charucoIds: result.detectionData.charucoIds,
-                    imageSize: result.imageSize
+                    image: result.original_image_base64 ? `data:image/jpeg;base64,${result.original_image_base64}` : (result.annotated_image_base64 ? `data:image/jpeg;base64,${result.annotated_image_base64}` : ""),
+                    debugImage: result.annotated_image_base64 ? `data:image/jpeg;base64,${result.annotated_image_base64}` : undefined,
+                    corners: result.corners,
+                    imageSize: [result.image_width, result.image_height]
                 };
 
                 const newDetections = [...detections, newDetection];
                 setDetections(newDetections);
                 onDetectionsChange(newDetections);
             } else {
-                setLastError("No board detected. Please adjust the board or camera.");
+                setLastError(result.error || "No board detected. Please adjust the board or camera.");
             }
 
         } catch (e: any) {
@@ -119,8 +103,11 @@ export function CaptureStep({
 
     const handleSquareSizeChange = (val: string) => {
         setSquareLengthInch(val);
-        const inches = parseFloat(val);
-        if (!isNaN(inches)) {
+    };
+
+    const handleSquareSizeBlur = () => {
+        const inches = parseFloat(squareLengthInch);
+        if (!isNaN(inches) && inches > 0) {
             onUpdateSquareSize(inches * INCHES_TO_METERS);
         }
     };
@@ -137,12 +124,11 @@ export function CaptureStep({
                     </CardHeader>
                     <CardContent>
                         <div className="relative aspect-video bg-black rounded-lg overflow-hidden mb-4">
-                            <img
+                            <MJPEGStream
                                 ref={imgRef}
                                 src={streamUrl}
                                 alt="Camera Stream"
-                                crossOrigin="anonymous"
-                                className="w-full h-full object-contain"
+                                className="w-full h-full bg-black"
                             />
                             {/* Hidden canvas for capture */}
                             <canvas ref={canvasRef} className="hidden" />
@@ -198,6 +184,7 @@ export function CaptureStep({
                                     step="0.01"
                                     value={squareLengthInch}
                                     onChange={(e) => handleSquareSizeChange(e.target.value)}
+                                    onBlur={handleSquareSizeBlur}
                                 />
                             </div>
                         </div>
@@ -230,7 +217,7 @@ export function CaptureStep({
                                             </Button>
                                         </div>
                                         <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-xs p-1">
-                                            Corners: {detection.charucoCorners.length}
+                                            Corners: {detection.corners.length}
                                         </div>
                                     </div>
                                 ))}

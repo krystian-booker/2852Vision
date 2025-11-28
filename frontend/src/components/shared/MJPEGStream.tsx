@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, forwardRef } from 'react'
 import { cn } from '@/lib/utils'
 
-interface MJPEGStreamProps {
+interface MJPEGStreamProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   src: string
   alt?: string
   className?: string
@@ -13,13 +13,14 @@ interface MJPEGStreamProps {
  * MJPEG Stream viewer component for displaying live camera feeds
  * Handles loading states and error conditions
  */
-export function MJPEGStream({
+export const MJPEGStream = forwardRef<HTMLImageElement, MJPEGStreamProps>(({
   src,
   alt = 'MJPEG Stream',
   className,
   onError,
   onLoad,
-}: MJPEGStreamProps) {
+  ...props
+}, ref) => {
   const [isLoading, setIsLoading] = useState(true)
   const [hasError, setHasError] = useState(false)
 
@@ -78,6 +79,7 @@ export function MJPEGStream({
       )}
 
       <img
+        ref={ref}
         src={src}
         alt={alt}
         className={cn(
@@ -86,7 +88,10 @@ export function MJPEGStream({
         )}
         onLoad={handleLoad}
         onError={handleError}
+        {...props}
       />
     </div>
   )
-}
+})
+
+MJPEGStream.displayName = 'MJPEGStream'

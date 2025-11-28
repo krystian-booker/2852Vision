@@ -3,6 +3,7 @@
 
 #include "routes/calibration.hpp"
 #include "services/camera_service.hpp"
+#include "threads/thread_manager.hpp"
 #include <spdlog/spdlog.h>
 #include <opencv2/objdetect/aruco_detector.hpp>
 #include <opencv2/objdetect/charuco_detector.hpp>
@@ -108,6 +109,9 @@ nlohmann::json CalibrationService::detectMarkers(const cv::Mat& image,
     std::string bufferStr(buffer.begin(), buffer.end());
     result["annotated_image_base64"] = drogon::utils::base64Encode(
         reinterpret_cast<const unsigned char*>(bufferStr.data()), bufferStr.size());
+
+    result["image_width"] = image.cols;
+    result["image_height"] = image.rows;
 
     return result;
 }
@@ -246,19 +250,30 @@ void CalibrationService::registerRoutes(drogon::HttpAppFramework& app) {
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
             try {
-                // Decode base64 image
                 auto body = nlohmann::json::parse(req->getBody());
-                std::string imageBase64 = body.at("image").get<std::string>();
 
-                // Remove data URL prefix if present
-                size_t commaPos = imageBase64.find(',');
-                if (commaPos != std::string::npos) {
-                    imageBase64 = imageBase64.substr(commaPos + 1);
+                // Check if camera_id is provided
+                cv::Mat image;
+                if (body.contains("camera_id")) {
+                    int cameraId = body.at("camera_id").get<int>();
+                    auto frame = ThreadManager::instance().getCameraFrame(cameraId);
+                    if (!frame || frame->empty()) {
+                        auto resp = HttpResponse::newHttpResponse();
+                        resp->setStatusCode(k400BadRequest);
+                        resp->setContentTypeCode(CT_APPLICATION_JSON);
+                        resp->setBody(R"({"error": "Failed to capture frame from camera. Is it running?"})");
+                        callback(resp);
+                        return;
+                    }
+                    image = frame->color().clone();
+                } else {
+                    auto resp = HttpResponse::newHttpResponse();
+                    resp->setStatusCode(k400BadRequest);
+                    resp->setContentTypeCode(CT_APPLICATION_JSON);
+                    resp->setBody(R"({"error": "Missing camera_id parameter"})");
+                    callback(resp);
+                    return;
                 }
-
-                std::string imageData = drogon::utils::base64Decode(imageBase64);
-                std::vector<uchar> imageBytes(imageData.begin(), imageData.end());
-                cv::Mat image = cv::imdecode(imageBytes, cv::IMREAD_COLOR);
 
                 if (image.empty()) {
                     auto resp = HttpResponse::newHttpResponse();
@@ -273,6 +288,16 @@ void CalibrationService::registerRoutes(drogon::HttpAppFramework& app) {
                 int squaresY = body.value("squaresY", 5);
 
                 auto result = detectMarkers(image, squaresX, squaresY);
+
+                // If we captured from camera, include the original image in the response
+                if (body.contains("camera_id")) {
+                    std::vector<uchar> buffer;
+                    cv::imencode(".jpg", image, buffer);
+                    std::string bufferStr(buffer.begin(), buffer.end());
+                    result["original_image_base64"] = drogon::utils::base64Encode(
+                        reinterpret_cast<const unsigned char*>(bufferStr.data()), bufferStr.size());
+                }
+
                 auto resp = HttpResponse::newHttpResponse();
                 resp->setStatusCode(k200OK);
                 resp->setContentTypeCode(CT_APPLICATION_JSON);
