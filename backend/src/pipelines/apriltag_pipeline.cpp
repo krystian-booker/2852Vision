@@ -1,7 +1,9 @@
+#define _USE_MATH_DEFINES
 #include "pipelines/apriltag_pipeline.hpp"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <thread>
+#include <cmath>
 
 namespace vision {
 
@@ -99,13 +101,14 @@ void AprilTagPipeline::initializeDetector() {
                  config_.family, detector_->nthreads, config_.decimate);
 }
 
+void AprilTagPipeline::setCalibration(const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs) {
+    BasePipeline::setCalibration(cameraMatrix, distCoeffs);
+    spdlog::debug("AprilTag calibration set with distortion coefficients");
+}
+
 void AprilTagPipeline::setCalibration(double fx, double fy, double cx, double cy) {
-    fx_ = fx;
-    fy_ = fy;
-    cx_ = cx;
-    cy_ = cy;
-    hasCalibration_ = true;
-    spdlog::debug("AprilTag calibration set - fx: {:.1f}, fy: {:.1f}, cx: {:.1f}, cy: {:.1f}",
+    BasePipeline::setCalibration(fx, fy, cx, cy);
+    spdlog::debug("AprilTag calibration set (simplified) - fx: {:.1f}, fy: {:.1f}, cx: {:.1f}, cy: {:.1f}",
                   fx, fy, cx, cy);
 }
 
@@ -208,60 +211,86 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
 
         // Pose estimation if calibrated
         if (hasCalibration_) {
-            apriltag_detection_info_t info;
-            info.det = det;
-            info.tagsize = config_.tag_size_m;
-            info.fx = fx_;
-            info.fy = fy_;
-            info.cx = cx_;
-            info.cy = cy_;
-
-            apriltag_pose_t pose;
-            double err = estimate_tag_pose(&info, &pose);
-
-            // RAII guard ensures pose matrices are cleaned up even if exception occurs
-            PoseMatrixGuard poseGuard(pose);
-
-            // Extract translation (in meters)
-            detection["pose"] = {
-                {"x", MATD_EL(pose.t, 0, 0)},
-                {"y", MATD_EL(pose.t, 1, 0)},
-                {"z", MATD_EL(pose.t, 2, 0)},
-                {"error", err}
+            // 3D Object Points for the tag (centered at origin, z=0)
+            // Order: bottom-left, bottom-right, top-right, top-left (CCW)
+            double halfSize = config_.tag_size_m / 2.0;
+            std::vector<cv::Point3f> objectPoints = {
+                cv::Point3f(-halfSize, -halfSize, 0),
+                cv::Point3f( halfSize, -halfSize, 0),
+                cv::Point3f( halfSize,  halfSize, 0),
+                cv::Point3f(-halfSize,  halfSize, 0)
             };
 
-            // Extract rotation matrix
-            nlohmann::json rotation = nlohmann::json::array();
-            for (int r = 0; r < 3; r++) {
-                nlohmann::json row = nlohmann::json::array();
-                for (int c = 0; c < 3; c++) {
-                    row.push_back(MATD_EL(pose.R, r, c));
-                }
-                rotation.push_back(row);
+            // Image Points from detection
+            std::vector<cv::Point2f> imagePoints;
+            for (const auto& corner : data.corners) {
+                imagePoints.push_back(corner);
             }
-            detection["rotation"] = rotation;
 
-            // Draw pose axes on frame (simple 2D projection)
-            double scale = 50.0;  // pixels per unit for visualization
-            cv::Point center(static_cast<int>(det->c[0]), static_cast<int>(det->c[1]));
+            cv::Vec3d rvec, tvec;
+            // Use SQPNP as it is robust and accurate, avoiding the strict point ordering checks of IPPE_SQUARE
+            bool success = cv::solvePnP(objectPoints, imagePoints, cameraMatrix_, distCoeffs_, rvec, tvec, false, cv::SOLVEPNP_SQPNP);
 
-            // X axis (red)
-            cv::line(result.annotatedFrame, center,
-                     cv::Point(center.x + static_cast<int>(MATD_EL(pose.R, 0, 0) * scale),
-                               center.y + static_cast<int>(MATD_EL(pose.R, 1, 0) * scale)),
-                     cv::Scalar(0, 0, 255), 2);
+            if (success) {
+                // Convert rotation vector to rotation matrix
+                cv::Mat R;
+                cv::Rodrigues(rvec, R);
 
-            // Y axis (green)
-            cv::line(result.annotatedFrame, center,
-                     cv::Point(center.x + static_cast<int>(MATD_EL(pose.R, 0, 1) * scale),
-                               center.y + static_cast<int>(MATD_EL(pose.R, 1, 1) * scale)),
-                     cv::Scalar(0, 255, 0), 2);
+                // Extract translation
+                detection["pose"] = {
+                    {"x", tvec[0]},
+                    {"y", tvec[1]},
+                    {"z", tvec[2]},
+                    {"error", 0.0} // solvePnP doesn't return error directly
+                };
 
-            // Z axis (blue)
-            cv::line(result.annotatedFrame, center,
-                     cv::Point(center.x + static_cast<int>(MATD_EL(pose.R, 0, 2) * scale),
-                               center.y + static_cast<int>(MATD_EL(pose.R, 1, 2) * scale)),
-                     cv::Scalar(255, 0, 0), 2);
+                // Calculate Euler angles (Roll, Pitch, Yaw)
+                // R = [ r00 r01 r02 ]
+                //     [ r10 r11 r12 ]
+                //     [ r20 r21 r22 ]
+                double r00 = R.at<double>(0, 0);
+                double r10 = R.at<double>(1, 0);
+                double r20 = R.at<double>(2, 0);
+                double r21 = R.at<double>(2, 1);
+                double r22 = R.at<double>(2, 2);
+
+                double pitch = std::atan2(r21, r22);
+                double yaw = std::atan2(-r20, std::sqrt(r21*r21 + r22*r22));
+                double roll = std::atan2(r10, r00);
+
+                // Convert to degrees
+                double pitchDeg = pitch * 180.0 / M_PI;
+                double yawDeg = yaw * 180.0 / M_PI;
+                double rollDeg = roll * 180.0 / M_PI;
+
+                // Add 3D pose object
+                detection["pose_3d"] = {
+                    {"translation", {
+                        {"x", tvec[0]},
+                        {"y", tvec[1]},
+                        {"z", tvec[2]}
+                    }},
+                    {"rotation", {
+                        {"roll", rollDeg},
+                        {"pitch", pitchDeg},
+                        {"yaw", yawDeg}
+                    }}
+                };
+
+                // Extract rotation matrix for JSON
+                nlohmann::json rotation = nlohmann::json::array();
+                for (int r = 0; r < 3; r++) {
+                    nlohmann::json row = nlohmann::json::array();
+                    for (int c = 0; c < 3; c++) {
+                        row.push_back(R.at<double>(r, c));
+                    }
+                    rotation.push_back(row);
+                }
+                detection["rotation"] = rotation;
+
+                // Draw pose axes
+                cv::drawFrameAxes(result.annotatedFrame, cameraMatrix_, distCoeffs_, rvec, tvec, config_.tag_size_m * 0.5);
+            }
         }
 
         result.detections.push_back(detection);
@@ -397,14 +426,6 @@ MultiTagResult AprilTagPipeline::solveMultiTagPose(const std::vector<TagDetectio
         return result;  // Need at least one tag
     }
 
-    // Camera matrix
-    cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) <<
-        fx_, 0, cx_,
-        0, fy_, cy_,
-        0, 0, 1);
-
-    // Assume no distortion (can be added later)
-    cv::Mat distCoeffs = cv::Mat::zeros(5, 1, CV_64F);
 
     // Solve PnP
     cv::Vec3d rvec, tvec;
@@ -422,7 +443,7 @@ MultiTagResult AprilTagPipeline::solveMultiTagPose(const std::vector<TagDetectio
         // Use RANSAC for multiple tags
         success = cv::solvePnPRansac(
             objectPoints, imagePoints,
-            cameraMatrix, distCoeffs,
+            cameraMatrix_, distCoeffs_,
             rvec, tvec,
             useExtrinsicGuess,
             100,  // iterations
@@ -435,7 +456,7 @@ MultiTagResult AprilTagPipeline::solveMultiTagPose(const std::vector<TagDetectio
         // Use regular solvePnP for single tag
         success = cv::solvePnP(
             objectPoints, imagePoints,
-            cameraMatrix, distCoeffs,
+            cameraMatrix_, distCoeffs_,
             rvec, tvec,
             useExtrinsicGuess,
             cv::SOLVEPNP_SQPNP
@@ -448,7 +469,7 @@ MultiTagResult AprilTagPipeline::solveMultiTagPose(const std::vector<TagDetectio
 
     // Calculate reprojection error
     std::vector<cv::Point2f> projectedPoints;
-    cv::projectPoints(objectPoints, rvec, tvec, cameraMatrix, distCoeffs, projectedPoints);
+    cv::projectPoints(objectPoints, rvec, tvec, cameraMatrix_, distCoeffs_, projectedPoints);
 
     double totalError = 0.0;
     for (size_t i = 0; i < imagePoints.size(); i++) {

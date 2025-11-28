@@ -286,6 +286,8 @@ nlohmann::json VisionThread::getLatestResults() {
     return latestResults_;
 }
 
+
+
 void VisionThread::updateConfig(const nlohmann::json& config) {
     if (processor_) {
         processor_->updateConfig(config);
@@ -516,6 +518,40 @@ bool ThreadManager::startPipeline(const Pipeline& pipeline, int cameraId) {
 
     // Create and start vision thread
     auto thread = std::make_unique<VisionThread>(pipeline, std::move(processor));
+
+    // Inject calibration if available
+    try {
+        const auto& cam = cameraIt->second->getCamera();
+        if (cam.camera_matrix_json.has_value() && !cam.camera_matrix_json->empty()) {
+            auto matrixJson = nlohmann::json::parse(*cam.camera_matrix_json);
+            
+            cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
+            if (matrixJson.is_array() && matrixJson.size() == 3) {
+                for (int r = 0; r < 3; r++) {
+                    for (int c = 0; c < 3; c++) {
+                        cameraMatrix.at<double>(r, c) = matrixJson[r][c];
+                    }
+                }
+            }
+
+            cv::Mat distCoeffs = cv::Mat::zeros(5, 1, CV_64F);
+            if (cam.dist_coeffs_json.has_value() && !cam.dist_coeffs_json->empty()) {
+                auto distJson = nlohmann::json::parse(*cam.dist_coeffs_json);
+                if (distJson.is_array()) {
+                    distCoeffs = cv::Mat::zeros(distJson.size(), 1, CV_64F);
+                    for (size_t i = 0; i < distJson.size(); i++) {
+                        distCoeffs.at<double>(i) = distJson[i];
+                    }
+                }
+            }
+
+            thread->getProcessor()->setCalibration(cameraMatrix, distCoeffs);
+            spdlog::info("Set calibration for pipeline {} (camera {}) with distortion", pipeline.id, cameraId);
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("Failed to parse calibration for camera {}: {}", cameraId, e.what());
+    }
+
     thread->start(queue);
 
     pipelineQueues_.emplace(pipeline.id, queue);

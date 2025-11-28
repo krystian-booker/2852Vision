@@ -30,10 +30,23 @@ public:
     virtual PipelineType type() const = 0;
 
     // Set camera calibration (for pose estimation)
-    void setCalibration(const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs) {
+    virtual void setCalibration(const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs) {
         cameraMatrix_ = cameraMatrix.clone();
         distCoeffs_ = distCoeffs.clone();
         hasCalibration_ = true;
+    }
+
+    // Set camera calibration (simplified)
+    virtual void setCalibration(double fx, double fy, double cx, double cy) {
+        cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
+        cameraMatrix.at<double>(0, 0) = fx;
+        cameraMatrix.at<double>(1, 1) = fy;
+        cameraMatrix.at<double>(0, 2) = cx;
+        cameraMatrix.at<double>(1, 2) = cy;
+        
+        cv::Mat distCoeffs = cv::Mat::zeros(5, 1, CV_64F);
+        
+        setCalibration(cameraMatrix, distCoeffs);
     }
 
     bool hasCalibration() const { return hasCalibration_; }

@@ -121,6 +121,9 @@ public:
     // Update pipeline config
     void updateConfig(const nlohmann::json& config);
 
+    // Get underlying processor
+    BasePipeline* getProcessor() { return processor_.get(); }
+
 private:
     void run();
 

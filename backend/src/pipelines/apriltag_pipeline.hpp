@@ -87,7 +87,8 @@ public:
     PipelineType type() const override { return PipelineType::AprilTag; }
 
     // Set camera calibration for pose estimation
-    void setCalibration(double fx, double fy, double cx, double cy);
+    void setCalibration(const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs) override;
+    void setCalibration(double fx, double fy, double cx, double cy) override;
 
     // Set field layout for multi-tag pose estimation
     void setFieldLayout(const FieldLayout& layout);
@@ -99,9 +100,6 @@ private:
     AprilTagDetectorPtr detector_;
     AprilTagFamilyPtr family_;
 
-    // Camera calibration for pose estimation
-    bool hasCalibration_ = false;
-    double fx_ = 0, fy_ = 0, cx_ = 0, cy_ = 0;
 
     // Field layout for multi-tag pose
     std::optional<FieldLayout> fieldLayout_;

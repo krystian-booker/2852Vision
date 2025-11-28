@@ -1058,13 +1058,15 @@ function AprilTagForm({
                   <TableHead>X (m)</TableHead>
                   <TableHead>Y (m)</TableHead>
                   <TableHead>Z (m)</TableHead>
+                  <TableHead>Pitch (°)</TableHead>
+                  <TableHead>Roll (°)</TableHead>
                   <TableHead>Yaw (°)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {results.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                    <TableCell colSpan={7} className="text-center text-muted-foreground">
                       No targets detected
                     </TableCell>
                   </TableRow>
@@ -1072,10 +1074,12 @@ function AprilTagForm({
                   results.map((target: any, index: number) => (
                     <TableRow key={target.id ?? index}>
                       <TableCell>{target.id ?? index}</TableCell>
-                      <TableCell>{target.camera_to_tag?.translation?.x?.toFixed(3) ?? 'N/A'}</TableCell>
-                      <TableCell>{target.camera_to_tag?.translation?.y?.toFixed(3) ?? 'N/A'}</TableCell>
-                      <TableCell>{target.camera_to_tag?.translation?.z?.toFixed(3) ?? 'N/A'}</TableCell>
-                      <TableCell>{target.camera_to_tag?.rotation?.euler_deg?.yaw?.toFixed(2) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_3d?.translation?.x?.toFixed(3) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_3d?.translation?.y?.toFixed(3) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_3d?.translation?.z?.toFixed(3) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_3d?.rotation?.pitch?.toFixed(2) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_3d?.rotation?.roll?.toFixed(2) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_3d?.rotation?.yaw?.toFixed(2) ?? 'N/A'}</TableCell>
                     </TableRow>
                   ))
                 )}
