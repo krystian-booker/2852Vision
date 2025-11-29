@@ -1,6 +1,8 @@
 #include "threads/thread_manager.hpp"
 #include "services/pipeline_service.hpp"
 #include "services/streamer_service.hpp"
+#include "services/settings_service.hpp"
+#include "vision/field_layout.hpp"
 #include <spdlog/spdlog.h>
 
 namespace vision {
@@ -291,6 +293,19 @@ nlohmann::json VisionThread::getLatestResults() {
 void VisionThread::updateConfig(const nlohmann::json& config) {
     if (processor_) {
         processor_->updateConfig(config);
+    }
+}
+
+void VisionThread::updateFieldLayout(const std::string& layoutName) {
+    if (processor_) {
+        auto layout = FieldLayoutService::instance().getFieldLayout(layoutName);
+        if (layout) {
+            processor_->setFieldLayout(*layout);
+        } else {
+            if (!layoutName.empty()) {
+                spdlog::warn("Field layout '{}' not found during update", layoutName);
+            }
+        }
     }
 }
 
@@ -621,6 +636,17 @@ void ThreadManager::updatePipelineConfig(int pipelineId, const nlohmann::json& c
         it->second->updateConfig(config);
         spdlog::info("Updated configuration for running pipeline {}", pipelineId);
     }
+}
+
+void ThreadManager::updateFieldLayout(const std::string& layoutName) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    for (auto& [id, thread] : visionThreads_) {
+        if (thread->isRunning()) {
+            thread->updateFieldLayout(layoutName);
+        }
+    }
+    spdlog::info("Updated field layout to '{}' for all running pipelines", layoutName);
 }
 
 FramePtr ThreadManager::getCameraFrame(int cameraId) {

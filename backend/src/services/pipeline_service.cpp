@@ -133,6 +133,10 @@ bool PipelineService::updatePipelineConfig(int id, const nlohmann::json& config)
     });
 }
 
+void PipelineService::updateFieldLayout(const std::string& layoutName) {
+    ThreadManager::instance().updateFieldLayout(layoutName);
+}
+
 bool PipelineService::deletePipeline(int id) {
     auto& db = Database::instance();
     return db.withLock([id](SQLite::Database& sqlDb) {

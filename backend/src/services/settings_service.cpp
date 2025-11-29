@@ -1,4 +1,5 @@
 #include "services/settings_service.hpp"
+#include "services/pipeline_service.hpp"
 #include "core/database.hpp"
 #include "core/config.hpp"
 #include <spdlog/spdlog.h>
@@ -141,6 +142,9 @@ std::string SettingsService::getSelectedField() {
 void SettingsService::setSelectedField(const std::string& fieldName) {
     set("selected_field", fieldName);
     spdlog::info("Selected field layout: {}", fieldName);
+    
+    // Propagate change to all active pipelines
+    PipelineService::instance().updateFieldLayout(fieldName);
 }
 
 std::string SettingsService::getFieldsDirectory() {

@@ -3,6 +3,7 @@
 #include "utils/geometry.hpp"
 #include "models/pipeline.hpp"
 #include "utils/frame_buffer.hpp"
+#include "vision/field_layout.hpp"
 #include <nlohmann/json.hpp>
 #include <opencv2/opencv.hpp>
 #include <memory>
@@ -50,6 +51,9 @@ public:
         
         setCalibration(cameraMatrix, distCoeffs);
     }
+
+    // Set field layout (for global pose estimation)
+    virtual void setFieldLayout(const FieldLayout& layout) {}
 
     bool hasCalibration() const { return hasCalibration_; }
 

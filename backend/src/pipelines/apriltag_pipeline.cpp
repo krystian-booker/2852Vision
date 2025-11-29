@@ -5,6 +5,8 @@
 #include <thread>
 #include <cmath>
 #include "utils/coordinate_system.hpp"
+#include "services/settings_service.hpp"
+#include "vision/field_layout.hpp"
 
 namespace vision {
 
@@ -96,6 +98,15 @@ void AprilTagPipeline::initializeDetector() {
 
     spdlog::info("AprilTag detector initialized - family: {}, threads: {}, decimate: {:.1f}",
                  config_.family, detector_->nthreads, config_.decimate);
+
+    // Set initial field layout from global settings
+    std::string selectedField = SettingsService::instance().getSelectedField();
+    if (!selectedField.empty()) {
+        auto layout = FieldLayoutService::instance().getFieldLayout(selectedField);
+        if (layout) {
+            setFieldLayout(*layout);
+        }
+    }
 }
 
 void AprilTagPipeline::setCalibration(const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs) {
@@ -301,19 +312,6 @@ void AprilTagPipeline::updateConfig(const nlohmann::json& config) {
 
     spdlog::info("AprilTag config updated - family: {}, threads: {}, decimate: {:.1f}",
                  config_.family, detector_->nthreads, config_.decimate);
-
-    // Update field layout if changed
-    if (!config_.selected_field.empty()) {
-        auto layout = FieldLayoutService::instance().getFieldLayout(config_.selected_field);
-        if (layout) {
-            setFieldLayout(*layout);
-        } else {
-            spdlog::warn("Selected field layout '{}' not found", config_.selected_field);
-            fieldLayout_.reset();
-        }
-    } else {
-        fieldLayout_.reset();
-    }
 }
 
 void AprilTagPipeline::setFieldLayout(const FieldLayout& layout) {

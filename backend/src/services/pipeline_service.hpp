@@ -20,6 +20,9 @@ public:
     bool updatePipelineConfig(int id, const nlohmann::json& config);
     bool deletePipeline(int id);
 
+    // Update field layout for all pipelines
+    void updateFieldLayout(const std::string& layoutName);
+
     // Get default config for pipeline type
     static nlohmann::json getDefaultConfig(PipelineType type);
 

@@ -121,6 +121,9 @@ public:
     // Update pipeline config
     void updateConfig(const nlohmann::json& config);
 
+    // Update field layout
+    void updateFieldLayout(const std::string& layoutName);
+
     // Get underlying processor
     BasePipeline* getProcessor() { return processor_.get(); }
 
@@ -168,6 +171,9 @@ public:
 
     // Update pipeline configuration for a running pipeline
     void updatePipelineConfig(int pipelineId, const nlohmann::json& config);
+
+    // Update field layout for all running pipelines
+    void updateFieldLayout(const std::string& layoutName);
 
     // Get frames for streaming
     FramePtr getCameraFrame(int cameraId);

@@ -7,6 +7,7 @@
 #include "core/config.hpp"
 #include "core/database.hpp"
 #include "services/camera_service.hpp"
+#include "vision/field_layout.hpp"
 #include "services/pipeline_service.hpp"
 #include "services/streamer_service.hpp"
 #include "drivers/realsense_driver.hpp"
@@ -39,6 +40,9 @@ int main(int argc, char** argv) {
 
     // Initialize database
     vision::Database::instance().initialize(config.database_path);
+
+    // Initialize Field Layouts
+    vision::FieldLayoutService::instance().initialize(config.data_directory);
 
     // Initialize camera SDK support
     vision::RealSenseDriver::initialize();
