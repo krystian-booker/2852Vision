@@ -7,8 +7,7 @@ import type { BoardConfig } from './BoardConfig';
 
 interface Detection {
     id: string;
-    charucoCorners: any[];
-    charucoIds: any[];
+    corners: any[];
     imageSize: [number, number];
 }
 
@@ -38,12 +37,15 @@ export function ResultStep({
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        detections: detections.map(d => ({
-                            charucoCorners: d.charucoCorners,
-                            charucoIds: d.charucoIds
+                        frames: detections.map(d => ({
+                            corners: d.corners
                         })),
-                        imageSize: detections[0].imageSize,
-                        ...boardConfig
+                        image_width: detections[0].imageSize[0],
+                        image_height: detections[0].imageSize[1],
+                        squaresX: boardConfig.squaresX,
+                        squaresY: boardConfig.squaresY,
+                        square_length: boardConfig.squareLength,
+                        marker_length: boardConfig.markerLength
                     })
                 });
 
@@ -69,10 +71,10 @@ export function ResultStep({
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    cameraId,
-                    cameraMatrix: result.cameraMatrix,
-                    distCoeffs: result.distCoeffs,
-                    reprojectionError: result.reprojectionError,
+                    camera_id: cameraId,
+                    camera_matrix: result.camera_matrix,
+                    dist_coeffs: result.dist_coeffs,
+                    reprojection_error: result.reprojection_error,
                     resolution: { width: detections[0].imageSize[0], height: detections[0].imageSize[1] }
                 })
             });
@@ -126,8 +128,8 @@ export function ResultStep({
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="p-4 border rounded-lg bg-neutral-50 dark:bg-neutral-900">
                             <div className="text-sm text-muted-foreground mb-1">Reprojection Error</div>
-                            <div className={`text-2xl font-bold ${result.reprojectionError < 1.0 ? 'text-green-600' : 'text-yellow-600'}`}>
-                                {result.reprojectionError.toFixed(4)} px
+                            <div className={`text-2xl font-bold ${result.reprojection_error < 1.0 ? 'text-green-600' : 'text-yellow-600'}`}>
+                                {result.reprojection_error.toFixed(4)} px
                             </div>
                             <div className="text-xs text-muted-foreground mt-1">
                                 Lower is better. Ideally &lt; 1.0.
@@ -137,7 +139,7 @@ export function ResultStep({
                         <div className="p-4 border rounded-lg bg-neutral-50 dark:bg-neutral-900 col-span-2">
                             <div className="text-sm text-muted-foreground mb-1">Camera Matrix</div>
                             <pre className="text-xs font-mono overflow-x-auto p-2 bg-white dark:bg-black rounded border">
-                                {JSON.stringify(result.cameraMatrix, null, 2)}
+                                {JSON.stringify(result.camera_matrix, null, 2)}
                             </pre>
                         </div>
                     </div>
@@ -145,7 +147,7 @@ export function ResultStep({
                     <div className="p-4 border rounded-lg bg-neutral-50 dark:bg-neutral-900">
                         <div className="text-sm text-muted-foreground mb-1">Distortion Coefficients</div>
                         <pre className="text-xs font-mono overflow-x-auto p-2 bg-white dark:bg-black rounded border">
-                            {JSON.stringify(result.distCoeffs, null, 2)}
+                            {JSON.stringify(result.dist_coeffs, null, 2)}
                         </pre>
                     </div>
                 </CardContent>

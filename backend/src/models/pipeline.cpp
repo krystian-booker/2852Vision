@@ -9,13 +9,11 @@ nlohmann::json AprilTagConfig::toJson() const {
         {"family", family},
         {"tag_size_m", tag_size_m},
         {"threads", threads},
-        {"auto_threads", auto_threads},
         {"decimate", decimate},
         {"blur", blur},
         {"refine_edges", refine_edges},
         {"decision_margin", decision_margin},
         {"pose_iterations", pose_iterations},
-        {"multi_tag_enabled", multi_tag_enabled},
         {"ransac_reproj_threshold", ransac_reproj_threshold},
         {"selected_field", selected_field}
     };
@@ -26,13 +24,11 @@ AprilTagConfig AprilTagConfig::fromJson(const nlohmann::json& j) {
     cfg.family = j.value("family", "tag36h11");
     cfg.tag_size_m = j.value("tag_size_m", 0.1524);
     cfg.threads = j.value("threads", 4);
-    cfg.auto_threads = j.value("auto_threads", true);
     cfg.decimate = j.value("decimate", 2.0);
     cfg.blur = j.value("blur", 0.0);
     cfg.refine_edges = j.value("refine_edges", true);
     cfg.decision_margin = j.value("decision_margin", 35);
     cfg.pose_iterations = j.value("pose_iterations", 50);
-    cfg.multi_tag_enabled = j.value("multi_tag_enabled", false);
     cfg.ransac_reproj_threshold = j.value("ransac_reproj_threshold", 0.1);
     cfg.selected_field = j.value("selected_field", "");
     return cfg;

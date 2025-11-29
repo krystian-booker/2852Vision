@@ -34,7 +34,6 @@ export interface PipelineConfig {
   family?: string
   tag_size_m?: number
   threads?: number
-  auto_threads?: boolean
   decimate?: number
   blur?: number
   refine_edges?: boolean
@@ -43,14 +42,12 @@ export interface PipelineConfig {
   decode_sharpening?: number
   min_weight?: number
   edge_threshold?: number
-  multi_tag_enabled?: boolean
   ransac_reproj_threshold?: number
   ransac_confidence?: number
   min_inliers?: number
   use_prev_guess?: boolean
   publish_field_pose?: boolean
   output_quaternion?: boolean
-  multi_tag_error_threshold?: number
 
   // ColoredShape config
   hue_min?: number

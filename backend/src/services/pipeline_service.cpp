@@ -1,4 +1,5 @@
 #include "services/pipeline_service.hpp"
+#include "threads/thread_manager.hpp"
 #include "core/database.hpp"
 #include <spdlog/spdlog.h>
 
@@ -125,9 +126,15 @@ bool PipelineService::updatePipelineConfig(int id, const nlohmann::json& config)
         bool success = stmt.exec() > 0;
         if (success) {
             spdlog::debug("Updated config for pipeline {}", id);
+            // Propagate update to running thread
+            ThreadManager::instance().updatePipelineConfig(id, config);
         }
         return success;
     });
+}
+
+void PipelineService::updateFieldLayout(const std::string& layoutName) {
+    ThreadManager::instance().updateFieldLayout(layoutName);
 }
 
 bool PipelineService::deletePipeline(int id) {

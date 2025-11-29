@@ -69,6 +69,9 @@ public:
     // Get camera ID
     int cameraId() const { return camera_.id; }
 
+    // Get camera object
+    const Camera& getCamera() const { return camera_; }
+
 private:
     void run();
     void applyOrientation(cv::Mat& frame);
@@ -118,6 +121,12 @@ public:
     // Update pipeline config
     void updateConfig(const nlohmann::json& config);
 
+    // Update field layout
+    void updateFieldLayout(const std::string& layoutName);
+
+    // Get underlying processor
+    BasePipeline* getProcessor() { return processor_.get(); }
+
 private:
     void run();
 
@@ -146,10 +155,25 @@ public:
     void stopCamera(int cameraId);
     bool isCameraRunning(int cameraId);
 
+    // Restart camera with new settings (if running)
+    void restartCamera(const Camera& newCamera);
+
+    // Execute an action with the camera temporarily paused
+    void executeWithCameraPaused(int cameraId, std::function<void()> action);
+
     // Start/stop pipeline thread
     bool startPipeline(const Pipeline& pipeline, int cameraId);
     void stopPipeline(int pipelineId);
     bool isPipelineRunning(int pipelineId);
+
+    // Update calibration for all pipelines associated with a camera
+    void updateCalibration(int cameraId, const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs);
+
+    // Update pipeline configuration for a running pipeline
+    void updatePipelineConfig(int pipelineId, const nlohmann::json& config);
+
+    // Update field layout for all running pipelines
+    void updateFieldLayout(const std::string& layoutName);
 
     // Get frames for streaming
     FramePtr getCameraFrame(int cameraId);

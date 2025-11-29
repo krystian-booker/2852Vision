@@ -1,9 +1,20 @@
 #include "drivers/realsense_driver.hpp"
+#include "drivers/realsense_loader.hpp"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <set>
+#include <mutex>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <delayimp.h>
+#endif
 
 namespace vision {
+
+// Static member initialization
+static std::mutex realsenseInitMutex_;
+static bool realsenseInitialized_ = false;
 
 RealSenseDriver::RealSenseDriver(const Camera& camera)
     : camera_(camera) {
@@ -14,12 +25,67 @@ RealSenseDriver::~RealSenseDriver() {
 }
 
 bool RealSenseDriver::isAvailable() {
-    return true;
+#ifdef VISION_WITH_REALSENSE
+    return RealSenseLoader::isLoaded();
+#else
+    return false;
+#endif
 }
 
-bool RealSenseDriver::connect() {
+void RealSenseDriver::initialize() {
+    std::lock_guard<std::mutex> lock(realsenseInitMutex_);
+
+    if (realsenseInitialized_) {
+        return;
+    }
+
+#ifdef VISION_WITH_REALSENSE
+    // First, check if RealSense SDK DLLs are available
+    if (!RealSenseLoader::tryLoad()) {
+        spdlog::warn("RealSense SDK not available: {}", RealSenseLoader::getLoadError());
+        realsenseInitialized_ = false;
+        return;
+    }
+
+    realsenseInitialized_ = true;
+    spdlog::info("RealSense SDK initialized successfully");
+#else
+    spdlog::warn("RealSense support not compiled in");
+#endif
+}
+
+void RealSenseDriver::shutdown() {
+    std::lock_guard<std::mutex> lock(realsenseInitMutex_);
+
+    if (!realsenseInitialized_) {
+        return;
+    }
+
+#ifdef VISION_WITH_REALSENSE
+    // Unload the dynamically loaded library
+    RealSenseLoader::unload();
+    spdlog::info("RealSense SDK shutdown complete");
+#endif
+
+    realsenseInitialized_ = false;
+}
+
+#ifdef VISION_WITH_REALSENSE
+
+// ============================================================================
+// FULL IMPLEMENTATIONS (when RealSense SDK is available)
+// ============================================================================
+
+bool RealSenseDriver::connect(bool silent) {
     if (connected_) {
         return true;
+    }
+
+    if (!RealSenseLoader::isLoaded()) {
+        if (!silent) {
+            spdlog::error("RealSense SDK not loaded. Cannot connect to camera.");
+        }
+        return false;
     }
 
     try {
@@ -218,6 +284,11 @@ int RealSenseDriver::getGain() const {
 std::vector<DeviceInfo> RealSenseDriver::listDevices() {
     std::vector<DeviceInfo> devices;
 
+    if (!RealSenseLoader::isLoaded()) {
+        spdlog::debug("RealSense SDK not loaded, skipping device enumeration");
+        return devices;
+    }
+
     try {
         rs2::context ctx;
         auto deviceList = ctx.query_devices();
@@ -258,6 +329,10 @@ std::vector<DeviceInfo> RealSenseDriver::listDevices() {
 
 std::vector<CameraProfile> RealSenseDriver::getSupportedProfiles(const std::string& identifier) {
     std::vector<CameraProfile> profiles;
+
+    if (!RealSenseLoader::isLoaded()) {
+        return profiles;
+    }
 
     try {
         rs2::context ctx;
@@ -314,5 +389,44 @@ std::vector<CameraProfile> RealSenseDriver::getSupportedProfiles(const std::stri
 
     return profiles;
 }
+
+#else // !VISION_WITH_REALSENSE
+
+// ============================================================================
+// STUB IMPLEMENTATIONS (when RealSense is not available)
+// ============================================================================
+
+bool RealSenseDriver::connect(bool) {
+    spdlog::error("RealSense support not compiled in");
+    return false;
+}
+
+void RealSenseDriver::disconnect() {
+    connected_ = false;
+}
+
+bool RealSenseDriver::isConnected() const {
+    return false;
+}
+
+FrameResult RealSenseDriver::getFrame() {
+    return FrameResult{};
+}
+
+void RealSenseDriver::setExposure(ExposureMode, int) {}
+void RealSenseDriver::setGain(GainMode, int) {}
+int RealSenseDriver::getExposure() const { return 0; }
+int RealSenseDriver::getGain() const { return 0; }
+
+std::vector<DeviceInfo> RealSenseDriver::listDevices() {
+    spdlog::debug("RealSense support not compiled in");
+    return {};
+}
+
+std::vector<CameraProfile> RealSenseDriver::getSupportedProfiles(const std::string&) {
+    return {};
+}
+
+#endif // VISION_WITH_REALSENSE
 
 } // namespace vision

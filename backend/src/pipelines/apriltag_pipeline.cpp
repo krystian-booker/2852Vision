@@ -1,7 +1,12 @@
+#define _USE_MATH_DEFINES
 #include "pipelines/apriltag_pipeline.hpp"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <thread>
+#include <cmath>
+#include "utils/coordinate_system.hpp"
+#include "services/settings_service.hpp"
+#include "vision/field_layout.hpp"
 
 namespace vision {
 
@@ -84,11 +89,7 @@ void AprilTagPipeline::initializeDetector() {
     apriltag_detector_add_family(detector_.get(), family_.get());
 
     // Configure detector parameters
-    if (config_.auto_threads) {
-        detector_->nthreads = static_cast<int>(std::thread::hardware_concurrency());
-    } else {
-        detector_->nthreads = config_.threads;
-    }
+    detector_->nthreads = config_.threads;
 
     detector_->quad_decimate = config_.decimate;
     detector_->quad_sigma = config_.blur;
@@ -97,15 +98,25 @@ void AprilTagPipeline::initializeDetector() {
 
     spdlog::info("AprilTag detector initialized - family: {}, threads: {}, decimate: {:.1f}",
                  config_.family, detector_->nthreads, config_.decimate);
+
+    // Set initial field layout from global settings
+    std::string selectedField = SettingsService::instance().getSelectedField();
+    if (!selectedField.empty()) {
+        auto layout = FieldLayoutService::instance().getFieldLayout(selectedField);
+        if (layout) {
+            setFieldLayout(*layout);
+        }
+    }
+}
+
+void AprilTagPipeline::setCalibration(const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs) {
+    BasePipeline::setCalibration(cameraMatrix, distCoeffs);
+    spdlog::debug("AprilTag calibration set with distortion coefficients");
 }
 
 void AprilTagPipeline::setCalibration(double fx, double fy, double cx, double cy) {
-    fx_ = fx;
-    fy_ = fy;
-    cx_ = cx;
-    cy_ = cy;
-    hasCalibration_ = true;
-    spdlog::debug("AprilTag calibration set - fx: {:.1f}, fy: {:.1f}, cx: {:.1f}, cy: {:.1f}",
+    BasePipeline::setCalibration(fx, fy, cx, cy);
+    spdlog::debug("AprilTag calibration set (simplified) - fx: {:.1f}, fy: {:.1f}, cx: {:.1f}, cy: {:.1f}",
                   fx, fy, cx, cy);
 }
 
@@ -115,6 +126,9 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
 
     PipelineResult result;
     result.detections = nlohmann::json::array();
+
+    // Lock for thread safety
+    std::lock_guard<std::mutex> lock(mutex_);
 
     if (!detector_ || !family_) {
         spdlog::warn("AprilTag detector not initialized");
@@ -143,12 +157,15 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
     // Run detection
     zarray_t* detections = apriltag_detector_detect(detector_.get(), &im);
 
-    // Collect valid detections first (before cloning frame)
-    struct DetectionData {
-        apriltag_detection_t* det;
-        std::vector<cv::Point> corners;
-    };
-    std::vector<DetectionData> validDetections;
+    // Clone frame for annotation
+    if (frame.channels() == 1) {
+        cv::cvtColor(frame, result.annotatedFrame, cv::COLOR_GRAY2BGR);
+    } else {
+        result.annotatedFrame = frame.clone();
+    }
+
+    // Collect valid detections for global solver
+    std::vector<TagDetection> validDetectionsForSolver;
 
     for (int i = 0; i < zarray_size(detections); i++) {
         apriltag_detection_t* det;
@@ -159,122 +176,94 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
             continue;
         }
 
-        DetectionData data;
-        data.det = det;
+        // Draw visuals
+        std::vector<cv::Point> drawCorners;
         for (int j = 0; j < 4; j++) {
-            data.corners.push_back(cv::Point(
-                static_cast<int>(det->p[j][0]),
-                static_cast<int>(det->p[j][1])
-            ));
+            drawCorners.push_back(cv::Point(static_cast<int>(det->p[j][0]), static_cast<int>(det->p[j][1])));
         }
-        validDetections.push_back(std::move(data));
-    }
+        cv::polylines(result.annotatedFrame, drawCorners, true, cv::Scalar(0, 255, 0), 2);
+        cv::circle(result.annotatedFrame, cv::Point(static_cast<int>(det->c[0]), static_cast<int>(det->c[1])), 5, cv::Scalar(0, 0, 255), -1);
+        cv::putText(result.annotatedFrame, std::to_string(det->id), cv::Point(static_cast<int>(det->c[0] - 10), static_cast<int>(det->c[1] - 10)), cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(255, 0, 0), 2);
 
-    // Clone frame only once for annotation
-    result.annotatedFrame = frame.clone();
-
-    // Process and draw each valid detection
-    for (const auto& data : validDetections) {
-        apriltag_detection_t* det = data.det;
-        const auto& corners = data.corners;
-
-        // Draw polygon
-        cv::polylines(result.annotatedFrame, corners, true, cv::Scalar(0, 255, 0), 2);
-
-        // Draw center point
-        cv::circle(result.annotatedFrame,
-                   cv::Point(static_cast<int>(det->c[0]), static_cast<int>(det->c[1])),
-                   5, cv::Scalar(0, 0, 255), -1);
-
-        // Draw ID
-        cv::putText(result.annotatedFrame,
-                    std::to_string(det->id),
-                    cv::Point(static_cast<int>(det->c[0] - 10), static_cast<int>(det->c[1] - 10)),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(255, 0, 0), 2);
-
-        // Build detection JSON
+        // Build basic detection JSON
         nlohmann::json detection;
         detection["id"] = det->id;
         detection["decision_margin"] = det->decision_margin;
         detection["hamming"] = det->hamming;
         detection["center"] = {det->c[0], det->c[1]};
-
-        // Corners
+        
         nlohmann::json cornersJson = nlohmann::json::array();
         for (int j = 0; j < 4; j++) {
             cornersJson.push_back({det->p[j][0], det->p[j][1]});
         }
         detection["corners"] = cornersJson;
 
-        // Pose estimation if calibrated
+        // --- PART A: Individual Tag Solve (Tag-Relative) ---
         if (hasCalibration_) {
-            apriltag_detection_info_t info;
-            info.det = det;
-            info.tagsize = config_.tag_size_m;
-            info.fx = fx_;
-            info.fy = fy_;
-            info.cx = cx_;
-            info.cy = cy_;
-
-            apriltag_pose_t pose;
-            double err = estimate_tag_pose(&info, &pose);
-
-            // RAII guard ensures pose matrices are cleaned up even if exception occurs
-            PoseMatrixGuard poseGuard(pose);
-
-            // Extract translation (in meters)
-            detection["pose"] = {
-                {"x", MATD_EL(pose.t, 0, 0)},
-                {"y", MATD_EL(pose.t, 1, 0)},
-                {"z", MATD_EL(pose.t, 2, 0)},
-                {"error", err}
+            // 3D Object Points for the tag (centered at origin, z=0)
+            double halfSize = config_.tag_size_m / 2.0;
+            std::vector<cv::Point3f> objectPoints = {
+                cv::Point3f(-halfSize,  halfSize, 0), // Bottom-Left
+                cv::Point3f( halfSize,  halfSize, 0), // Bottom-Right
+                cv::Point3f( halfSize, -halfSize, 0), // Top-Right
+                cv::Point3f(-halfSize, -halfSize, 0)  // Top-Left
             };
 
-            // Extract rotation matrix
-            nlohmann::json rotation = nlohmann::json::array();
-            for (int r = 0; r < 3; r++) {
-                nlohmann::json row = nlohmann::json::array();
-                for (int c = 0; c < 3; c++) {
-                    row.push_back(MATD_EL(pose.R, r, c));
-                }
-                rotation.push_back(row);
+            std::vector<cv::Point2f> imagePoints;
+            for (int j = 0; j < 4; j++) {
+                imagePoints.push_back(cv::Point2f(static_cast<float>(det->p[j][0]), static_cast<float>(det->p[j][1])));
             }
-            detection["rotation"] = rotation;
 
-            // Draw pose axes on frame (simple 2D projection)
-            double scale = 50.0;  // pixels per unit for visualization
-            cv::Point center(static_cast<int>(det->c[0]), static_cast<int>(det->c[1]));
+            cv::Vec3d rvec, tvec;
+            bool success = cv::solvePnP(objectPoints, imagePoints, cameraMatrix_, distCoeffs_, rvec, tvec, false, cv::SOLVEPNP_SQPNP);
 
-            // X axis (red)
-            cv::line(result.annotatedFrame, center,
-                     cv::Point(center.x + static_cast<int>(MATD_EL(pose.R, 0, 0) * scale),
-                               center.y + static_cast<int>(MATD_EL(pose.R, 1, 0) * scale)),
-                     cv::Scalar(0, 0, 255), 2);
+            if (success) {
+                // Convert to Pose3d (Camera-Relative)
+                // Note: This is the pose of the TAG in CAMERA coordinates
+                Pose3d tagPose = Pose3d::fromOpenCV(rvec, tvec);
+                detection["pose_relative"] = tagPose.toJson();
 
-            // Y axis (green)
-            cv::line(result.annotatedFrame, center,
-                     cv::Point(center.x + static_cast<int>(MATD_EL(pose.R, 0, 1) * scale),
-                               center.y + static_cast<int>(MATD_EL(pose.R, 1, 1) * scale)),
-                     cv::Scalar(0, 255, 0), 2);
-
-            // Z axis (blue)
-            cv::line(result.annotatedFrame, center,
-                     cv::Point(center.x + static_cast<int>(MATD_EL(pose.R, 0, 2) * scale),
-                               center.y + static_cast<int>(MATD_EL(pose.R, 1, 2) * scale)),
-                     cv::Scalar(255, 0, 0), 2);
+                // Draw 3D Cube
+                double size = config_.tag_size_m;
+                std::vector<cv::Point3f> cubePoints = {
+                    cv::Point3f(-halfSize, -halfSize, 0), cv::Point3f( halfSize, -halfSize, 0),
+                    cv::Point3f( halfSize,  halfSize, 0), cv::Point3f(-halfSize,  halfSize, 0),
+                    cv::Point3f(-halfSize, -halfSize, -size), cv::Point3f( halfSize, -halfSize, -size),
+                    cv::Point3f( halfSize,  halfSize, -size), cv::Point3f(-halfSize,  halfSize, -size)
+                };
+                std::vector<cv::Point2f> imagePointsCube;
+                cv::projectPoints(cubePoints, rvec, tvec, cameraMatrix_, distCoeffs_, imagePointsCube);
+                cv::Scalar cubeColor(0, 255, 0);
+                for (int k = 0; k < 4; k++) {
+                    cv::line(result.annotatedFrame, imagePointsCube[k], imagePointsCube[k+4], cubeColor, 2);
+                    cv::line(result.annotatedFrame, imagePointsCube[k+4], imagePointsCube[((k+1)%4)+4], cubeColor, 2);
+                }
+            }
         }
 
         result.detections.push_back(detection);
+
+        // --- PART B: Prep for Global Solve (Field-Relative) ---
+        if (fieldLayout_ && fieldLayout_->hasTag(det->id)) {
+            TagDetection tagData;
+            tagData.id = det->id;
+            for (int j = 0; j < 4; j++) {
+                tagData.corners.push_back(cv::Point2f(static_cast<float>(det->p[j][0]), static_cast<float>(det->p[j][1])));
+            }
+            validDetectionsForSolver.push_back(tagData);
+        }
+    }
+
+    // --- PART C: Global Solve (Multi-Tag Logic) ---
+    if (hasCalibration_ && !validDetectionsForSolver.empty()) {
+        MultiTagResult globalPose = solveMultiTagPose(validDetectionsForSolver, frame.size());
+        if (globalPose.valid) {
+            result.robotPose = globalPose.robotPose;
+        }
     }
 
     // Cleanup detections
     apriltag_detections_destroy(detections);
-
-    // Draw detection count
-    cv::putText(result.annotatedFrame,
-                "Tags: " + std::to_string(result.detections.size()),
-                cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
-                cv::Scalar(0, 255, 0), 2);
 
     auto endTime = std::chrono::high_resolution_clock::now();
     result.processingTimeMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
@@ -300,11 +289,7 @@ void AprilTagPipeline::updateConfig(const nlohmann::json& config) {
     // Configure new detector
     apriltag_detector_add_family(newDetector.get(), newFamily.get());
 
-    if (newConfig.auto_threads) {
-        newDetector->nthreads = static_cast<int>(std::thread::hardware_concurrency());
-    } else {
-        newDetector->nthreads = newConfig.threads;
-    }
+    newDetector->nthreads = newConfig.threads;
 
     newDetector->quad_decimate = newConfig.decimate;
     newDetector->quad_sigma = newConfig.blur;
@@ -312,14 +297,18 @@ void AprilTagPipeline::updateConfig(const nlohmann::json& config) {
     newDetector->decode_sharpening = 0.25;
 
     // Now swap - this won't throw
-    // Remove family from old detector before destruction
-    if (detector_ && family_) {
-        apriltag_detector_remove_family(detector_.get(), family_.get());
-    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        
+        // Remove family from old detector before destruction
+        if (detector_ && family_) {
+            apriltag_detector_remove_family(detector_.get(), family_.get());
+        }
 
-    config_ = std::move(newConfig);
-    family_ = std::move(newFamily);
-    detector_ = std::move(newDetector);
+        config_ = std::move(newConfig);
+        family_ = std::move(newFamily);
+        detector_ = std::move(newDetector);
+    }
 
     spdlog::info("AprilTag config updated - family: {}, threads: {}, decimate: {:.1f}",
                  config_.family, detector_->nthreads, config_.decimate);
@@ -346,10 +335,10 @@ std::vector<cv::Point3f> AprilTagPipeline::getTagCornersInField(int tagId) const
     // Order: bottom-left, bottom-right, top-right, top-left (CCW from camera view)
     double halfSize = config_.tag_size_m / 2.0;
     std::vector<Eigen::Vector3d> localCorners = {
-        {-halfSize, -halfSize, 0.0},  // Bottom-left
-        { halfSize, -halfSize, 0.0},  // Bottom-right
-        { halfSize,  halfSize, 0.0},  // Top-right
-        {-halfSize,  halfSize, 0.0}   // Top-left
+        {-halfSize,  halfSize, 0.0},  // Bottom-left
+        { halfSize,  halfSize, 0.0},  // Bottom-right
+        { halfSize, -halfSize, 0.0},  // Top-right
+        {-halfSize, -halfSize, 0.0}   // Top-left
     };
 
     // Transform corners to field coordinates
@@ -397,47 +386,35 @@ MultiTagResult AprilTagPipeline::solveMultiTagPose(const std::vector<TagDetectio
         return result;  // Need at least one tag
     }
 
-    // Camera matrix
-    cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) <<
-        fx_, 0, cx_,
-        0, fy_, cy_,
-        0, 0, 1);
-
-    // Assume no distortion (can be added later)
-    cv::Mat distCoeffs = cv::Mat::zeros(5, 1, CV_64F);
-
     // Solve PnP
     cv::Vec3d rvec, tvec;
-    bool useExtrinsicGuess = hasPrevPose_ && objectPoints.size() >= 8;  // Use guess if multiple tags
-
-    if (useExtrinsicGuess) {
-        rvec = prevRvec_;
-        tvec = prevTvec_;
-    }
-
-    cv::Mat inliers;
     bool success = false;
 
-    if (config_.multi_tag_enabled && objectPoints.size() >= 8) {
-        // Use RANSAC for multiple tags
+    // STRATEGY 1: Multi-Tag (8+ points)
+    // The geometry is rigid, so the solution is usually unique and stable.
+    if (objectPoints.size() >= 8) {
+        // Use RANSAC to throw out a tag if it's jittery/garbage
+        cv::Mat inliers;
         success = cv::solvePnPRansac(
             objectPoints, imagePoints,
-            cameraMatrix, distCoeffs,
+            cameraMatrix_, distCoeffs_,
             rvec, tvec,
-            useExtrinsicGuess,
+            hasPrevPose_, // Use previous frame as guess
             100,  // iterations
             static_cast<float>(config_.ransac_reproj_threshold),
             0.99,  // confidence
             inliers,
             cv::SOLVEPNP_SQPNP
         );
-    } else {
+    } 
+    // STRATEGY 2: Single-Tag (4 points)
+    else {
         // Use regular solvePnP for single tag
         success = cv::solvePnP(
             objectPoints, imagePoints,
-            cameraMatrix, distCoeffs,
+            cameraMatrix_, distCoeffs_,
             rvec, tvec,
-            useExtrinsicGuess,
+            hasPrevPose_,
             cv::SOLVEPNP_SQPNP
         );
     }
@@ -448,7 +425,7 @@ MultiTagResult AprilTagPipeline::solveMultiTagPose(const std::vector<TagDetectio
 
     // Calculate reprojection error
     std::vector<cv::Point2f> projectedPoints;
-    cv::projectPoints(objectPoints, rvec, tvec, cameraMatrix, distCoeffs, projectedPoints);
+    cv::projectPoints(objectPoints, rvec, tvec, cameraMatrix_, distCoeffs_, projectedPoints);
 
     double totalError = 0.0;
     for (size_t i = 0; i < imagePoints.size(); i++) {
@@ -458,13 +435,11 @@ MultiTagResult AprilTagPipeline::solveMultiTagPose(const std::vector<TagDetectio
     }
     result.reprojectionError = totalError / imagePoints.size();
 
-    // Convert to Pose3d
-    // Note: rvec/tvec give the transformation from field to camera
-    // We want camera pose in field, so we need to invert
-    Pose3d cameraInField = Pose3d::fromOpenCV(rvec, tvec).inverse();
+    // Convert directly from OpenCV PnP result to FRC Field Coordinates
+    // This returns the position of the CAMERA on the FIELD.
+    // The RoboRIO will handle adding the robot-to-camera offset.
+    result.robotPose = CoordinateUtils::solvePnPToFieldPose(rvec, tvec);
 
-    // Convert from OpenCV coordinates to FRC field coordinates
-    result.robotPose = CoordinateSystem::cameraToField(cameraInField);
     result.valid = true;
     result.tagsUsed = static_cast<int>(usedTagIds.size());
     result.tagIds = usedTagIds;

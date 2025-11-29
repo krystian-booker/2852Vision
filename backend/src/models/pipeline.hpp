@@ -28,13 +28,11 @@ struct AprilTagConfig {
     std::string family = "tag36h11";
     double tag_size_m = 0.1524;  // 6 inches default
     int threads = 4;
-    bool auto_threads = true;
     double decimate = 2.0;
     double blur = 0.0;
     bool refine_edges = true;
     int decision_margin = 35;
     int pose_iterations = 50;
-    bool multi_tag_enabled = false;
     double ransac_reproj_threshold = 0.1;
     std::string selected_field;
 

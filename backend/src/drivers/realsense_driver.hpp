@@ -5,7 +5,10 @@
 #include <string>
 #include <vector>
 #include <memory>
+
+#ifdef VISION_WITH_REALSENSE
 #include <librealsense2/rs.hpp>
+#endif
 
 namespace vision {
 
@@ -14,7 +17,7 @@ public:
     explicit RealSenseDriver(const Camera& camera);
     ~RealSenseDriver() override;
 
-    bool connect() override;
+    bool connect(bool silent = false) override;
     void disconnect() override;
     bool isConnected() const override;
     FrameResult getFrame() override;
@@ -30,13 +33,16 @@ public:
     static std::vector<DeviceInfo> listDevices();
     static std::vector<CameraProfile> getSupportedProfiles(const std::string& identifier);
 
-    // Check if RealSense support is available
+    // RealSense system management
+    static void initialize();
+    static void shutdown();
     static bool isAvailable();
 
 private:
     Camera camera_;
     bool connected_ = false;
 
+#ifdef VISION_WITH_REALSENSE
     rs2::pipeline pipeline_;
     rs2::pipeline_profile profile_;
     rs2::align align_{RS2_STREAM_COLOR};
@@ -49,6 +55,7 @@ private:
     // Helper methods
     void configurePipeline();
     void findSensors();
+#endif
 };
 
 } // namespace vision

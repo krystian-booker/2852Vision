@@ -3,30 +3,39 @@
 
 #include "routes/calibration.hpp"
 #include "services/camera_service.hpp"
+#include "threads/thread_manager.hpp"
 #include <spdlog/spdlog.h>
-#include <opencv2/aruco.hpp>
-#include <opencv2/aruco/charuco.hpp>
+#include <opencv2/objdetect/aruco_detector.hpp>
+#include <opencv2/objdetect/charuco_detector.hpp>
+#include <opencv2/objdetect/aruco_dictionary.hpp>
 #include <drogon/utils/Utilities.h>
 
 namespace vision {
 
-cv::Mat CalibrationService::generateBoard(int squaresX, int squaresY, int squareSize,
-                                          int markerSize, const std::string& dictionary) {
+cv::Mat CalibrationService::generateBoard(int squaresX, int squaresY, float squareLength,
+                                          float markerLength, int imageSquareSizePixels,
+                                          const std::string& dictionary) {
     // Get ArUco dictionary
-    cv::aruco::Dictionary dict = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
+    cv::aruco::PredefinedDictionaryType dictType = cv::aruco::DICT_6X6_250;
+    
+    if (dictionary == "DICT_4X4_50") dictType = cv::aruco::DICT_4X4_50;
+    else if (dictionary == "DICT_5X5_50") dictType = cv::aruco::DICT_5X5_50;
+    else if (dictionary == "DICT_6X6_50") dictType = cv::aruco::DICT_6X6_50;
+    
+    cv::aruco::Dictionary dict = cv::aruco::getPredefinedDictionary(dictType);
 
     // Create CharucoBoard
     cv::aruco::CharucoBoard board(
         cv::Size(squaresX, squaresY),
-        static_cast<float>(squareSize),
-        static_cast<float>(markerSize),
+        squareLength,
+        markerLength,
         dict
     );
 
     // Generate board image
     cv::Mat boardImage;
-    int imageWidth = squaresX * squareSize;
-    int imageHeight = squaresY * squareSize;
+    int imageWidth = squaresX * imageSquareSizePixels;
+    int imageHeight = squaresY * imageSquareSizePixels;
     board.generateImage(cv::Size(imageWidth, imageHeight), boardImage, 10, 1);
 
     return boardImage;
@@ -40,19 +49,6 @@ nlohmann::json CalibrationService::detectMarkers(const cv::Mat& image,
 
     // Get ArUco dictionary and create detector
     cv::aruco::Dictionary dict = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
-    cv::aruco::DetectorParameters detectorParams;
-    cv::aruco::ArucoDetector detector(dict, detectorParams);
-
-    // Detect markers
-    std::vector<int> markerIds;
-    std::vector<std::vector<cv::Point2f>> markerCorners;
-    detector.detectMarkers(image, markerCorners, markerIds);
-
-    if (markerIds.empty()) {
-        result["error"] = "No markers detected";
-        return result;
-    }
-
     // Create CharucoBoard
     cv::aruco::CharucoBoard board(
         cv::Size(squaresX, squaresY),
@@ -61,13 +57,23 @@ nlohmann::json CalibrationService::detectMarkers(const cv::Mat& image,
         dict
     );
 
-    // Interpolate Charuco corners
+    // Create CharucoDetector
+    cv::aruco::CharucoParameters charucoParams;
+    cv::aruco::DetectorParameters detectorParams;
+    cv::aruco::CharucoDetector detector(board, charucoParams, detectorParams);
+
+    // Detect markers and Charuco corners
+    std::vector<int> markerIds;
+    std::vector<std::vector<cv::Point2f>> markerCorners;
     std::vector<cv::Point2f> charucoCorners;
     std::vector<int> charucoIds;
-    cv::aruco::interpolateCornersCharuco(
-        markerCorners, markerIds, image, &board,
-        charucoCorners, charucoIds
-    );
+
+    detector.detectBoard(image, charucoCorners, charucoIds, markerCorners, markerIds);
+
+    if (markerIds.empty()) {
+        result["error"] = "No markers detected";
+        return result;
+    }
 
     if (charucoCorners.empty()) {
         result["error"] = "Could not interpolate Charuco corners";
@@ -104,6 +110,9 @@ nlohmann::json CalibrationService::detectMarkers(const cv::Mat& image,
     result["annotated_image_base64"] = drogon::utils::base64Encode(
         reinterpret_cast<const unsigned char*>(bufferStr.data()), bufferStr.size());
 
+    result["image_width"] = image.cols;
+    result["image_height"] = image.rows;
+
     return result;
 }
 
@@ -131,12 +140,32 @@ nlohmann::json CalibrationService::calibrate(
         dict
     );
 
+    // Collect object points and image points
+    std::vector<std::vector<cv::Point3f>> allObjPoints;
+    std::vector<std::vector<cv::Point2f>> allImgPoints;
+
+    for (size_t i = 0; i < allCorners.size(); i++) {
+        std::vector<cv::Point3f> objPoints;
+        std::vector<cv::Point2f> imgPoints;
+        board.matchImagePoints(allCorners[i], allIds[i], objPoints, imgPoints);
+        
+        if (!objPoints.empty()) {
+            allObjPoints.push_back(objPoints);
+            allImgPoints.push_back(imgPoints);
+        }
+    }
+
+    if (allObjPoints.empty()) {
+        result["error"] = "Not enough valid frames for calibration";
+        return result;
+    }
+
     // Calibrate camera
     cv::Mat cameraMatrix, distCoeffs;
     std::vector<cv::Mat> rvecs, tvecs;
 
-    double reprojectionError = cv::aruco::calibrateCameraCharuco(
-        allCorners, allIds, &board, imageSize,
+    double reprojectionError = cv::calibrateCamera(
+        allObjPoints, allImgPoints, imageSize,
         cameraMatrix, distCoeffs, rvecs, tvecs
     );
 
@@ -175,8 +204,9 @@ void CalibrationService::registerRoutes(drogon::HttpAppFramework& app) {
            std::function<void(const HttpResponsePtr&)>&& callback) {
             int squaresX = 7;
             int squaresY = 5;
-            int squareSize = 100;
-            int markerSize = 80;
+            float squareLength = 0.04f;
+            float markerLength = 0.03f;
+            std::string dictionary = "DICT_6X6_50";
 
             std::string param;
             param = req->getParameter("squaresX");
@@ -187,16 +217,20 @@ void CalibrationService::registerRoutes(drogon::HttpAppFramework& app) {
             if (!param.empty()) {
                 squaresY = std::stoi(param);
             }
-            param = req->getParameter("squareSize");
+            param = req->getParameter("squareLength");
             if (!param.empty()) {
-                squareSize = std::stoi(param);
+                squareLength = std::stof(param);
             }
-            param = req->getParameter("markerSize");
+            param = req->getParameter("markerLength");
             if (!param.empty()) {
-                markerSize = std::stoi(param);
+                markerLength = std::stof(param);
+            }
+            param = req->getParameter("dictionary");
+            if (!param.empty()) {
+                dictionary = param;
             }
 
-            cv::Mat board = generateBoard(squaresX, squaresY, squareSize, markerSize);
+            cv::Mat board = generateBoard(squaresX, squaresY, squareLength, markerLength, 100, dictionary);
 
             // Encode as PNG
             std::vector<uchar> buffer;
@@ -216,19 +250,30 @@ void CalibrationService::registerRoutes(drogon::HttpAppFramework& app) {
         [](const HttpRequestPtr& req,
            std::function<void(const HttpResponsePtr&)>&& callback) {
             try {
-                // Decode base64 image
                 auto body = nlohmann::json::parse(req->getBody());
-                std::string imageBase64 = body.at("image").get<std::string>();
 
-                // Remove data URL prefix if present
-                size_t commaPos = imageBase64.find(',');
-                if (commaPos != std::string::npos) {
-                    imageBase64 = imageBase64.substr(commaPos + 1);
+                // Check if camera_id is provided
+                cv::Mat image;
+                if (body.contains("camera_id")) {
+                    int cameraId = body.at("camera_id").get<int>();
+                    auto frame = ThreadManager::instance().getCameraFrame(cameraId);
+                    if (!frame || frame->empty()) {
+                        auto resp = HttpResponse::newHttpResponse();
+                        resp->setStatusCode(k400BadRequest);
+                        resp->setContentTypeCode(CT_APPLICATION_JSON);
+                        resp->setBody(R"({"error": "Failed to capture frame from camera. Is it running?"})");
+                        callback(resp);
+                        return;
+                    }
+                    image = frame->color().clone();
+                } else {
+                    auto resp = HttpResponse::newHttpResponse();
+                    resp->setStatusCode(k400BadRequest);
+                    resp->setContentTypeCode(CT_APPLICATION_JSON);
+                    resp->setBody(R"({"error": "Missing camera_id parameter"})");
+                    callback(resp);
+                    return;
                 }
-
-                std::string imageData = drogon::utils::base64Decode(imageBase64);
-                std::vector<uchar> imageBytes(imageData.begin(), imageData.end());
-                cv::Mat image = cv::imdecode(imageBytes, cv::IMREAD_COLOR);
 
                 if (image.empty()) {
                     auto resp = HttpResponse::newHttpResponse();
@@ -243,6 +288,16 @@ void CalibrationService::registerRoutes(drogon::HttpAppFramework& app) {
                 int squaresY = body.value("squaresY", 5);
 
                 auto result = detectMarkers(image, squaresX, squaresY);
+
+                // If we captured from camera, include the original image in the response
+                if (body.contains("camera_id")) {
+                    std::vector<uchar> buffer;
+                    cv::imencode(".jpg", image, buffer);
+                    std::string bufferStr(buffer.begin(), buffer.end());
+                    result["original_image_base64"] = drogon::utils::base64Encode(
+                        reinterpret_cast<const unsigned char*>(bufferStr.data()), bufferStr.size());
+                }
+
                 auto resp = HttpResponse::newHttpResponse();
                 resp->setStatusCode(k200OK);
                 resp->setContentTypeCode(CT_APPLICATION_JSON);
@@ -336,6 +391,30 @@ void CalibrationService::registerRoutes(drogon::HttpAppFramework& app) {
                 );
 
                 if (success) {
+                    // Push calibration to any running pipelines for this camera
+                    try {
+                        auto matrixJson = body["camera_matrix"];
+                        cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
+                        if (matrixJson.is_array() && matrixJson.size() == 3) {
+                            for (int r = 0; r < 3; r++) {
+                                for (int c = 0; c < 3; c++) {
+                                    cameraMatrix.at<double>(r, c) = matrixJson[r][c].get<double>();
+                                }
+                            }
+                        }
+
+                        auto distJson = body["dist_coeffs"];
+                        cv::Mat distCoeffs = cv::Mat::zeros(static_cast<int>(distJson.size()), 1, CV_64F);
+                        for (size_t i = 0; i < distJson.size(); i++) {
+                            distCoeffs.at<double>(static_cast<int>(i)) = distJson[i].get<double>();
+                        }
+
+                        ThreadManager::instance().updateCalibration(cameraId, cameraMatrix, distCoeffs);
+                    } catch (const std::exception& e) {
+                        spdlog::warn("Failed to push calibration to running pipelines: {}", e.what());
+                        // Don't fail the request - calibration was saved to DB successfully
+                    }
+
                     auto resp = HttpResponse::newHttpResponse();
                     resp->setStatusCode(k200OK);
                     resp->setContentTypeCode(CT_APPLICATION_JSON);

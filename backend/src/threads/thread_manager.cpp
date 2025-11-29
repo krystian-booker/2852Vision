@@ -1,5 +1,8 @@
 #include "threads/thread_manager.hpp"
 #include "services/pipeline_service.hpp"
+#include "services/streamer_service.hpp"
+#include "services/settings_service.hpp"
+#include "vision/field_layout.hpp"
 #include <spdlog/spdlog.h>
 
 namespace vision {
@@ -68,9 +71,11 @@ CameraThread::~CameraThread() {
 bool CameraThread::start() {
     if (running_.load()) return true;
 
+    // Don't fail if connect fails here - let the run loop handle retries
     if (!driver_->connect()) {
-        spdlog::error("Failed to connect to camera {}", camera_.id);
-        return false;
+        spdlog::warn("Initial connection to camera {} failed - will retry in run loop", camera_.id);
+    } else {
+        spdlog::info("Initial connection to camera {} successful", camera_.id);
     }
 
     running_ = true;
@@ -116,7 +121,36 @@ void CameraThread::run() {
     static constexpr int INITIAL_FRAME_TIMEOUT_MS = 5000;  // 5 seconds to get first frame
     static constexpr int LOG_INTERVAL = 100;  // Log every 100 frames
 
+    bool connectionErrorLogged = false;
+
     while (running_.load()) {
+        // Try to connect if not connected
+        if (!driver_->isConnected()) {
+             if (driver_->connect(connectionErrorLogged)) {
+                 spdlog::info("Connected to camera {}", camera_.id);
+                 connectionErrorLogged = false;
+             } else {
+                 if (!connectionErrorLogged) {
+                     // First failure is already logged by driver (silent=false)
+                     connectionErrorLogged = true;
+                 }
+                 
+                 // Publish placeholder while connecting
+                 if (totalFrameCount % 10 == 0) { // Limit frequency
+                     cv::Mat placeholder = cv::Mat::zeros(480, 640, CV_8UC3);
+                     cv::putText(placeholder, "Camera Connecting...", cv::Point(160, 240), 
+                         cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 255), 2);
+                     StreamerService::instance().publishFrame(
+                         "/camera/" + std::to_string(camera_.id),
+                         placeholder
+                     );
+                 }
+                 std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                 totalFrameCount++; // Increment to trigger placeholder logic
+                 continue;
+             }
+        }
+
         auto frameResult = driver_->getFrame();
 
         if (frameResult.empty()) {
@@ -126,15 +160,20 @@ void CameraThread::run() {
             if (!firstFrameReceived) {
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - startTime).count();
-                if (elapsed > INITIAL_FRAME_TIMEOUT_MS) {
-                    spdlog::error("Camera {} failed to produce first frame after {}ms - stopping thread",
-                        camera_.id, elapsed);
-                    running_ = false;
-                    break;
-                }
-                if (emptyFrameCount % 50 == 0) {
+                
+                // Instead of stopping, just log and publish a placeholder every second
+                if (elapsed > INITIAL_FRAME_TIMEOUT_MS && emptyFrameCount % 100 == 0) {
                     spdlog::warn("Camera {} waiting for first frame... ({} empty frames, {}ms elapsed)",
                         camera_.id, emptyFrameCount, elapsed);
+                    
+                    // Publish placeholder to keep stream alive
+                    cv::Mat placeholder = cv::Mat::zeros(480, 640, CV_8UC3);
+                    cv::putText(placeholder, "Waiting for frames...", cv::Point(160, 240), 
+                        cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 255), 2);
+                    StreamerService::instance().publishFrame(
+                        "/camera/" + std::to_string(camera_.id),
+                        placeholder
+                    );
                 }
             }
 
@@ -173,6 +212,12 @@ void CameraThread::run() {
             std::lock_guard<std::mutex> lock(displayMutex_);
             displayFrame_ = frame;
         }
+
+        // Publish to MJPEG streamer
+        StreamerService::instance().publishFrame(
+            "/camera/" + std::to_string(camera_.id),
+            frame->color()
+        );
 
         // Distribute to vision threads
         {
@@ -243,9 +288,24 @@ nlohmann::json VisionThread::getLatestResults() {
     return latestResults_;
 }
 
+
+
 void VisionThread::updateConfig(const nlohmann::json& config) {
     if (processor_) {
         processor_->updateConfig(config);
+    }
+}
+
+void VisionThread::updateFieldLayout(const std::string& layoutName) {
+    if (processor_) {
+        auto layout = FieldLayoutService::instance().getFieldLayout(layoutName);
+        if (layout) {
+            processor_->setFieldLayout(*layout);
+        } else {
+            if (!layoutName.empty()) {
+                spdlog::warn("Field layout '{}' not found during update", layoutName);
+            }
+        }
     }
 }
 
@@ -253,6 +313,19 @@ void VisionThread::run() {
     while (running_.load()) {
         QueuedFrame qf;
         if (!inputQueue_->pop(qf, std::chrono::milliseconds(100))) {
+            // Timeout - publish placeholder to keep stream alive
+            static auto lastPlaceholderTime = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastPlaceholderTime).count() > 1000) {
+                cv::Mat placeholder = cv::Mat::zeros(480, 640, CV_8UC3);
+                cv::putText(placeholder, "Waiting for input...", cv::Point(160, 240), 
+                    cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 0, 255), 2);
+                StreamerService::instance().publishFrame(
+                    "/pipeline/" + std::to_string(pipeline_.id),
+                    placeholder
+                );
+                lastPlaceholderTime = now;
+            }
             continue;
         }
 
@@ -273,6 +346,12 @@ void VisionThread::run() {
             processedFrame_ = outputFrame;
         }
 
+        // Publish to MJPEG streamer
+        StreamerService::instance().publishFrame(
+            "/pipeline/" + std::to_string(pipeline_.id),
+            outputFrame->color()
+        );
+
         // Update results
         {
             std::lock_guard<std::mutex> lock(resultsMutex_);
@@ -282,6 +361,12 @@ void VisionThread::run() {
                 {"detections", result.detections},
                 {"processing_time_ms", result.processingTimeMs}
             };
+
+            if (result.robotPose) {
+                latestResults_["robot_pose"] = result.robotPose->toJson();
+            } else {
+                latestResults_["robot_pose"] = nullptr;
+            }
         }
     }
 }
@@ -315,6 +400,10 @@ bool ThreadManager::startCamera(const Camera& camera) {
     }
 
     cameraThreads_.emplace(camera.id, std::move(thread));
+    
+    // Register stream path immediately so it doesn't 404 even if camera is slow/broken
+    StreamerService::instance().registerPath("/camera/" + std::to_string(camera.id));
+    
     return true;
 }
 
@@ -332,6 +421,95 @@ bool ThreadManager::isCameraRunning(int cameraId) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = cameraThreads_.find(cameraId);
     return it != cameraThreads_.end() && it->second->isRunning();
+}
+
+void ThreadManager::executeWithCameraPaused(int cameraId, std::function<void()> action) {
+    Camera camera;
+    bool wasRunning = false;
+    std::vector<std::pair<int, std::shared_ptr<FrameQueue>>> queuesToRestore;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = cameraThreads_.find(cameraId);
+        if (it != cameraThreads_.end() && it->second->isRunning()) {
+            wasRunning = true;
+            camera = it->second->getCamera();
+
+            // Find all pipelines for this camera and their queues
+            for (auto const& [pipelineId, camId] : pipelineToCameraMap_) {
+                if (camId == cameraId) {
+                    auto qIt = pipelineQueues_.find(pipelineId);
+                    if (qIt != pipelineQueues_.end()) {
+                        queuesToRestore.push_back({pipelineId, qIt->second});
+                    }
+                }
+            }
+
+            // Stop camera
+            it->second->stop();
+            cameraThreads_.erase(it);
+        }
+    }
+
+    // Execute action (without lock)
+    action();
+
+    if (wasRunning) {
+        // Restart camera
+        if (startCamera(camera)) {
+             std::lock_guard<std::mutex> lock(mutex_);
+             auto it = cameraThreads_.find(cameraId);
+             if (it != cameraThreads_.end()) {
+                 for (const auto& [pipelineId, queue] : queuesToRestore) {
+                     it->second->registerQueue(pipelineId, queue);
+                 }
+             }
+        }
+    }
+}
+
+
+void ThreadManager::restartCamera(const Camera& newCamera) {
+    int cameraId = newCamera.id;
+    bool wasRunning = false;
+    std::vector<std::pair<int, std::shared_ptr<FrameQueue>>> queuesToRestore;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = cameraThreads_.find(cameraId);
+        if (it != cameraThreads_.end()) {
+            // Only restart if it was actually running (or at least the thread object existed)
+            wasRunning = true;
+
+            // Find all pipelines for this camera and their queues
+            for (auto const& [pipelineId, camId] : pipelineToCameraMap_) {
+                if (camId == cameraId) {
+                    auto qIt = pipelineQueues_.find(pipelineId);
+                    if (qIt != pipelineQueues_.end()) {
+                        queuesToRestore.push_back({pipelineId, qIt->second});
+                    }
+                }
+            }
+
+            // Stop camera
+            it->second->stop();
+            cameraThreads_.erase(it);
+        }
+    }
+
+    if (wasRunning) {
+        // Restart camera with NEW settings
+        if (startCamera(newCamera)) {
+             std::lock_guard<std::mutex> lock(mutex_);
+             auto it = cameraThreads_.find(cameraId);
+             if (it != cameraThreads_.end()) {
+                 for (const auto& [pipelineId, queue] : queuesToRestore) {
+                     it->second->registerQueue(pipelineId, queue);
+                 }
+             }
+             spdlog::info("Restarted camera {} with new settings", cameraId);
+        }
+    }
 }
 
 bool ThreadManager::startPipeline(const Pipeline& pipeline, int cameraId) {
@@ -361,11 +539,48 @@ bool ThreadManager::startPipeline(const Pipeline& pipeline, int cameraId) {
 
     // Create and start vision thread
     auto thread = std::make_unique<VisionThread>(pipeline, std::move(processor));
+
+    // Inject calibration if available
+    try {
+        const auto& cam = cameraIt->second->getCamera();
+        if (cam.camera_matrix_json.has_value() && !cam.camera_matrix_json->empty()) {
+            auto matrixJson = nlohmann::json::parse(*cam.camera_matrix_json);
+            
+            cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
+            if (matrixJson.is_array() && matrixJson.size() == 3) {
+                for (int r = 0; r < 3; r++) {
+                    for (int c = 0; c < 3; c++) {
+                        cameraMatrix.at<double>(r, c) = matrixJson[r][c];
+                    }
+                }
+            }
+
+            cv::Mat distCoeffs = cv::Mat::zeros(5, 1, CV_64F);
+            if (cam.dist_coeffs_json.has_value() && !cam.dist_coeffs_json->empty()) {
+                auto distJson = nlohmann::json::parse(*cam.dist_coeffs_json);
+                if (distJson.is_array()) {
+                    distCoeffs = cv::Mat::zeros(distJson.size(), 1, CV_64F);
+                    for (size_t i = 0; i < distJson.size(); i++) {
+                        distCoeffs.at<double>(i) = distJson[i];
+                    }
+                }
+            }
+
+            thread->getProcessor()->setCalibration(cameraMatrix, distCoeffs);
+            spdlog::info("Set calibration for pipeline {} (camera {}) with distortion", pipeline.id, cameraId);
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("Failed to parse calibration for camera {}: {}", cameraId, e.what());
+    }
+
     thread->start(queue);
 
     pipelineQueues_.emplace(pipeline.id, queue);
     pipelineToCameraMap_.emplace(pipeline.id, cameraId);
     visionThreads_.emplace(pipeline.id, std::move(thread));
+
+    // Register stream path immediately
+    StreamerService::instance().registerPath("/pipeline/" + std::to_string(pipeline.id));
 
     return true;
 }
@@ -397,6 +612,41 @@ bool ThreadManager::isPipelineRunning(int pipelineId) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = visionThreads_.find(pipelineId);
     return it != visionThreads_.end() && it->second->isRunning();
+}
+
+void ThreadManager::updateCalibration(int cameraId, const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    for (const auto& [pipelineId, camId] : pipelineToCameraMap_) {
+        if (camId != cameraId) continue;
+
+        auto it = visionThreads_.find(pipelineId);
+        if (it != visionThreads_.end() && it->second->isRunning()) {
+            it->second->getProcessor()->setCalibration(cameraMatrix, distCoeffs);
+            spdlog::info("Updated calibration for running pipeline {} (camera {})", pipelineId, cameraId);
+        }
+    }
+}
+
+void ThreadManager::updatePipelineConfig(int pipelineId, const nlohmann::json& config) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    auto it = visionThreads_.find(pipelineId);
+    if (it != visionThreads_.end() && it->second->isRunning()) {
+        it->second->updateConfig(config);
+        spdlog::info("Updated configuration for running pipeline {}", pipelineId);
+    }
+}
+
+void ThreadManager::updateFieldLayout(const std::string& layoutName) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    for (auto& [id, thread] : visionThreads_) {
+        if (thread->isRunning()) {
+            thread->updateFieldLayout(layoutName);
+        }
+    }
+    spdlog::info("Updated field layout to '{}' for all running pipelines", layoutName);
 }
 
 FramePtr ThreadManager::getCameraFrame(int cameraId) {

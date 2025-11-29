@@ -8,6 +8,15 @@
 #include <windows.h>
 #endif
 
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
+#ifndef _WIN32
+#include <unistd.h>
+#include <limits.h>
+#endif
+
 namespace vision {
 
 Config Config::instance_;
@@ -43,8 +52,33 @@ namespace {
         return defaultValue;
     }
 
-    std::string getDefaultDataDirectory() {
-        // Always use local data directory relative to executable
+    std::string getExecutableDirectory() {
+#ifdef _WIN32
+        char path[MAX_PATH];
+        if (GetModuleFileNameA(NULL, path, MAX_PATH) > 0) {
+            std::filesystem::path exePath(path);
+            return exePath.parent_path().string();
+        }
+#else
+        char path[PATH_MAX];
+        ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
+        if (count != -1) {
+            std::filesystem::path exePath(std::string(path, count));
+            return exePath.parent_path().string();
+        }
+#endif
+        return ".";
+    }
+
+    std::string getAppDataDirectory() {
+#ifdef _WIN32
+        char path[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, path))) {
+            std::filesystem::path appDataPath(path);
+            return (appDataPath / "2852Vision").string();
+        }
+#endif
+        // On Linux or if SHGetFolderPathA fails, use ./data
         return "./data";
     }
 }
@@ -53,15 +87,23 @@ void Config::load() {
     // Environment
     environment = getEnv("FLASK_ENV", getEnv("VISION_ENV", "development"));
 
-    // Data directory
-    data_directory = getEnv("VISION_DATA_DIR", getDefaultDataDirectory());
+    // Data directory - always relative to executable for static assets like field layouts
+    std::string exeDir = getExecutableDirectory();
+    std::string defaultDataDir = (std::filesystem::path(exeDir) / "data").string();
+    data_directory = getEnv("VISION_DATA_DIR", defaultDataDir);
+
+    // AppData directory for database
+    std::string appDataDir = getAppDataDirectory();
+    std::filesystem::create_directories(appDataDir);
 
     // Ensure data directory exists
-    std::filesystem::create_directories(data_directory);
+    if (!std::filesystem::exists(data_directory)) {
+        spdlog::warn("Data directory not found at: {}", std::filesystem::absolute(data_directory).string());
+    }
 
-    // Database path
+    // Database path - defaults to AppData/vision.db
     database_path = getEnv("VISION_DATABASE_PATH",
-        (std::filesystem::path(data_directory) / "vision.db").string());
+        (std::filesystem::path(appDataDir) / "vision.db").string());
 
     // Server configuration
     server.host = getEnv("VISION_HOST", isDevelopment() ? "0.0.0.0" : "0.0.0.0");

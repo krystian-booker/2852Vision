@@ -13,15 +13,16 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
-import { Plus, Edit2, Trash2 } from 'lucide-react'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Plus, Edit2, Trash2, TriangleAlert } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { Link } from 'react-router-dom'
 
 // Default configurations
 const APRILTAG_DEFAULTS: PipelineConfig = {
   family: 'tag36h11',
   tag_size_m: 0.165,
   threads: 4,
-  auto_threads: true,
   decimate: 1,
   blur: 0,
   refine_edges: true,
@@ -30,14 +31,12 @@ const APRILTAG_DEFAULTS: PipelineConfig = {
   decode_sharpening: 0.25,
   min_weight: 0,
   edge_threshold: 0,
-  multi_tag_enabled: false,
   ransac_reproj_threshold: 1.2,
   ransac_confidence: 0.999,
   min_inliers: 12,
   use_prev_guess: true,
   publish_field_pose: true,
   output_quaternion: true,
-  multi_tag_error_threshold: 6.0,
 }
 
 const COLOURED_DEFAULTS: PipelineConfig = {
@@ -139,6 +138,9 @@ export default function Dashboard() {
     try {
       const data = await api.get<Camera[]>('/api/cameras')
       setCameras(data)
+      if (data.length > 0 && !selectedCameraId) {
+        setSelectedCameraId(data[0].id.toString())
+      }
     } catch (error) {
       toast({ title: 'Error', description: 'Failed to load cameras', variant: 'destructive' })
     }
@@ -167,6 +169,14 @@ export default function Dashboard() {
     try {
       const data = await api.get<Pipeline[]>(`/api/cameras/${selectedCameraId}/pipelines`)
       setPipelines(data)
+      if (data.length > 0) {
+        const currentExists = data.find((p) => p.id.toString() === selectedPipelineId)
+        if (!selectedPipelineId || !currentExists) {
+          setSelectedPipelineId(data[0].id.toString())
+        }
+      } else {
+        setSelectedPipelineId('')
+      }
     } catch (error) {
       toast({ title: 'Error', description: 'Failed to load pipelines', variant: 'destructive' })
       setPipelines([])
@@ -258,25 +268,26 @@ export default function Dashboard() {
       return
     }
 
+    let connected = false
     // Check camera connection status
     try {
       const status = await api.get<{ connected: boolean }>(`/api/cameras/status/${selectedCameraId}`)
-      setIsCameraConnected(status.connected)
+      connected = status.connected
+      setIsCameraConnected(connected)
     } catch (error) {
       setIsCameraConnected(false)
       return
     }
 
-    if (!isCameraConnected) {
+    if (!connected) {
       setFeedSrc('')
       return
     }
 
-    const cacheBuster = Date.now()
     if (feedType === 'processed' && selectedPipelineId) {
-      setFeedSrc(`/api/processed_video_feed/${selectedPipelineId}?t=${cacheBuster}`)
+      setFeedSrc(`http://${window.location.hostname}:5805/pipeline/${selectedPipelineId}`)
     } else {
-      setFeedSrc(`/api/video_feed/${selectedCameraId}?t=${cacheBuster}`)
+      setFeedSrc(`http://${window.location.hostname}:5805/camera/${selectedCameraId}`)
     }
   }
 
@@ -410,7 +421,9 @@ export default function Dashboard() {
     if (!selectedCameraId || !selectedPipelineId) return
     try {
       const data = await api.get<any>(`/api/cameras/results/${selectedCameraId}`)
-      const pipelineResults = data?.[selectedPipelineId]
+      const pipelineResults = Array.isArray(data)
+        ? data.find((r: any) => String(r.pipeline_id) === String(selectedPipelineId))
+        : data?.[selectedPipelineId]
       if (!pipelineResults) {
         setResults({ apriltag: [], ml: [], multiTag: null })
         return
@@ -485,6 +498,23 @@ export default function Dashboard() {
           </span>
         </div>
       </div>
+
+      {/* Calibration Warning */}
+      {selectedCameraId &&
+        cameras.find((c) => c.id.toString() === selectedCameraId) &&
+        !cameras.find((c) => c.id.toString() === selectedCameraId)?.camera_matrix_json && (
+          <Alert variant="destructive" className="bg-red-600 text-white border-red-700 [&>svg]:text-white">
+            <TriangleAlert className="h-4 w-4" />
+            <AlertTitle>Camera Uncalibrated</AlertTitle>
+            <AlertDescription>
+              The selected camera has not been calibrated. Please go to the{' '}
+              <Link to="/calibration" className="underline font-medium hover:text-white/80">
+                calibration page
+              </Link>{' '}
+              to calibrate it for accurate results.
+            </AlertDescription>
+          </Alert>
+        )}
 
       {/* Main Content: Setup and Live Feed */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1019,18 +1049,6 @@ function AprilTagForm({
               onChange={(e) => onChange({ decode_sharpening: parseFloat(e.target.value) })}
             />
           </div>
-
-          <div className="p-4 bg-surface rounded-lg space-y-3">
-            <h4 className="font-semibold text-sm">Multi-Tag Pose</h4>
-            <p className="text-xs text-muted-foreground">Enable when a WPILib field layout is available</p>
-            <div className="flex items-center gap-2">
-              <Switch
-                checked={config.multi_tag_enabled as boolean}
-                onCheckedChange={(checked) => onChange({ multi_tag_enabled: checked })}
-              />
-              <Label className="text-sm">Enable multi-tag solver</Label>
-            </div>
-          </div>
         </div>
 
         {/* Live Targets */}
@@ -1044,13 +1062,15 @@ function AprilTagForm({
                   <TableHead>X (m)</TableHead>
                   <TableHead>Y (m)</TableHead>
                   <TableHead>Z (m)</TableHead>
+                  <TableHead>Pitch (°)</TableHead>
+                  <TableHead>Roll (°)</TableHead>
                   <TableHead>Yaw (°)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {results.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                    <TableCell colSpan={7} className="text-center text-muted-foreground">
                       No targets detected
                     </TableCell>
                   </TableRow>
@@ -1058,10 +1078,12 @@ function AprilTagForm({
                   results.map((target: any, index: number) => (
                     <TableRow key={target.id ?? index}>
                       <TableCell>{target.id ?? index}</TableCell>
-                      <TableCell>{target.camera_to_tag?.translation?.x?.toFixed(3) ?? 'N/A'}</TableCell>
-                      <TableCell>{target.camera_to_tag?.translation?.y?.toFixed(3) ?? 'N/A'}</TableCell>
-                      <TableCell>{target.camera_to_tag?.translation?.z?.toFixed(3) ?? 'N/A'}</TableCell>
-                      <TableCell>{target.camera_to_tag?.rotation?.euler_deg?.yaw?.toFixed(2) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_3d?.translation?.x?.toFixed(3) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_3d?.translation?.y?.toFixed(3) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_3d?.translation?.z?.toFixed(3) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_3d?.rotation?.pitch?.toFixed(2) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_3d?.rotation?.roll?.toFixed(2) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_3d?.rotation?.yaw?.toFixed(2) ?? 'N/A'}</TableCell>
                     </TableRow>
                   ))
                 )}

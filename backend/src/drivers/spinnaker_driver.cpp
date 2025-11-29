@@ -151,26 +151,32 @@ void SpinnakerDriver::shutdown() {
 // CONNECTION MANAGEMENT
 // ============================================================================
 
-bool SpinnakerDriver::connect() {
+bool SpinnakerDriver::connect(bool silent) {
     if (connected_) {
         return true;
     }
 
     if (!initialized_) {
-        spdlog::error("Spinnaker SDK not initialized. Call initialize() first.");
+        if (!silent) {
+            spdlog::error("Spinnaker SDK not initialized. Call initialize() first.");
+        }
         return false;
     }
 
     std::lock_guard<std::mutex> lock(systemMutex_);
 
     try {
-        spdlog::info("Connecting to Spinnaker camera: {}", camera_.identifier);
+        if (!silent) {
+            spdlog::info("Connecting to Spinnaker camera: {}", camera_.identifier);
+        }
 
         // Get camera list
         Spinnaker::CameraList camList = system_->GetCameras();
 
         if (camList.GetSize() == 0) {
-            spdlog::error("No Spinnaker cameras found");
+            if (!silent) {
+                spdlog::error("No Spinnaker cameras found");
+            }
             camList.Clear();
             return false;
         }
@@ -192,7 +198,9 @@ bool SpinnakerDriver::connect() {
         }
 
         if (!cameraPtr_) {
-            spdlog::error("Camera with serial {} not found", camera_.identifier);
+            if (!silent) {
+                spdlog::error("Camera with serial {} not found", camera_.identifier);
+            }
             camList.Clear();
             return false;
         }
@@ -214,7 +222,9 @@ bool SpinnakerDriver::connect() {
         return true;
 
     } catch (Spinnaker::Exception& e) {
-        spdlog::error("Failed to connect to Spinnaker camera {}: {}", camera_.identifier, e.what());
+        if (!silent) {
+            spdlog::error("Failed to connect to Spinnaker camera {}: {}", camera_.identifier, e.what());
+        }
         cameraPtr_ = nullptr;
         return false;
     }

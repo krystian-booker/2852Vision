@@ -12,6 +12,15 @@ CameraService& CameraService::instance() {
     return instance;
 }
 
+// Cache for discovered devices to reduce contention
+struct DeviceCache {
+    std::vector<DeviceInfo> devices;
+    std::chrono::steady_clock::time_point lastUpdate;
+    std::mutex mutex;
+};
+static DeviceCache usbCache;
+static const auto CACHE_DURATION = std::chrono::seconds(5);
+
 std::vector<Camera> CameraService::getAllCameras() {
     auto& db = Database::instance();
     return db.withLock([](SQLite::Database& sqlDb) {
@@ -198,8 +207,15 @@ bool CameraService::saveCalibration(int id, const std::string& cameraMatrixJson,
 
 std::vector<DeviceInfo> CameraService::discoverCameras(CameraType type) {
     switch (type) {
-        case CameraType::USB:
-            return USBDriver::listDevices();
+        case CameraType::USB: {
+            std::lock_guard<std::mutex> lock(usbCache.mutex);
+            auto now = std::chrono::steady_clock::now();
+            if (now - usbCache.lastUpdate > CACHE_DURATION) {
+                usbCache.devices = USBDriver::listDevices();
+                usbCache.lastUpdate = now;
+            }
+            return usbCache.devices;
+        }
 
         case CameraType::Spinnaker:
             if (SpinnakerDriver::isAvailable()) {
