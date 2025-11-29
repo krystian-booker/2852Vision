@@ -15,7 +15,6 @@ nlohmann::json AprilTagConfig::toJson() const {
         {"refine_edges", refine_edges},
         {"decision_margin", decision_margin},
         {"pose_iterations", pose_iterations},
-        {"multi_tag_enabled", multi_tag_enabled},
         {"ransac_reproj_threshold", ransac_reproj_threshold},
         {"selected_field", selected_field}
     };
@@ -32,7 +31,6 @@ AprilTagConfig AprilTagConfig::fromJson(const nlohmann::json& j) {
     cfg.refine_edges = j.value("refine_edges", true);
     cfg.decision_margin = j.value("decision_margin", 35);
     cfg.pose_iterations = j.value("pose_iterations", 50);
-    cfg.multi_tag_enabled = j.value("multi_tag_enabled", false);
     cfg.ransac_reproj_threshold = j.value("ransac_reproj_threshold", 0.1);
     cfg.selected_field = j.value("selected_field", "");
     return cfg;

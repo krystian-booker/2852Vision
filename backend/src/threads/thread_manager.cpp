@@ -346,6 +346,12 @@ void VisionThread::run() {
                 {"detections", result.detections},
                 {"processing_time_ms", result.processingTimeMs}
             };
+
+            if (result.robotPose) {
+                latestResults_["robot_pose"] = result.robotPose->toJson();
+            } else {
+                latestResults_["robot_pose"] = nullptr;
+            }
         }
     }
 }

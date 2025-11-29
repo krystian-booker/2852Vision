@@ -32,14 +32,12 @@ const APRILTAG_DEFAULTS: PipelineConfig = {
   decode_sharpening: 0.25,
   min_weight: 0,
   edge_threshold: 0,
-  multi_tag_enabled: false,
   ransac_reproj_threshold: 1.2,
   ransac_confidence: 0.999,
   min_inliers: 12,
   use_prev_guess: true,
   publish_field_pose: true,
   output_quaternion: true,
-  multi_tag_error_threshold: 6.0,
 }
 
 const COLOURED_DEFAULTS: PipelineConfig = {
@@ -1051,18 +1049,6 @@ function AprilTagForm({
               value={config.decode_sharpening as number}
               onChange={(e) => onChange({ decode_sharpening: parseFloat(e.target.value) })}
             />
-          </div>
-
-          <div className="p-4 bg-surface rounded-lg space-y-3">
-            <h4 className="font-semibold text-sm">Multi-Tag Pose</h4>
-            <p className="text-xs text-muted-foreground">Enable when a WPILib field layout is available</p>
-            <div className="flex items-center gap-2">
-              <Switch
-                checked={config.multi_tag_enabled as boolean}
-                onCheckedChange={(checked) => onChange({ multi_tag_enabled: checked })}
-              />
-              <Label className="text-sm">Enable multi-tag solver</Label>
-            </div>
           </div>
         </div>
 

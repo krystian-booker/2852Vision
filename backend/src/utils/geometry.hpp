@@ -78,12 +78,11 @@ struct Quaternion {
     }
 
     static Quaternion fromJson(const nlohmann::json& j) {
-        return Quaternion(
-            j.at("W").get<double>(),
-            j.at("X").get<double>(),
-            j.at("Y").get<double>(),
-            j.at("Z").get<double>()
-        );
+        double w = j.contains("W") ? j.at("W").get<double>() : j.value("w", 1.0);
+        double x = j.contains("X") ? j.at("X").get<double>() : j.value("x", 0.0);
+        double y = j.contains("Y") ? j.at("Y").get<double>() : j.value("y", 0.0);
+        double z = j.contains("Z") ? j.at("Z").get<double>() : j.value("z", 0.0);
+        return Quaternion(w, x, y, z);
     }
 };
 
@@ -210,53 +209,6 @@ struct Pose3d {
     }
 };
 
-// Coordinate system conversion utilities
-namespace CoordinateSystem {
 
-// OpenCV camera frame: X-right, Y-down, Z-forward
-// FRC field frame: X-forward, Y-left, Z-up
-
-// Matrix to convert from OpenCV camera frame to FRC field frame
-inline Eigen::Matrix3d openCVToFRC() {
-    Eigen::Matrix3d m;
-    // Maps: OpenCV (X,Y,Z) -> FRC (Z,-X,-Y)
-    m << 0, 0, 1,
-        -1, 0, 0,
-         0,-1, 0;
-    return m;
-}
-
-// Matrix to convert from FRC field frame to OpenCV camera frame
-inline Eigen::Matrix3d frcToOpenCV() {
-    return openCVToFRC().transpose();
-}
-
-// Convert a pose from camera frame (OpenCV) to field frame (FRC)
-inline Pose3d cameraToField(const Pose3d& cameraPose) {
-    Eigen::Matrix3d conversion = openCVToFRC();
-
-    // Convert rotation
-    Eigen::Matrix3d newR = conversion * cameraPose.rotation.matrix * conversion.transpose();
-
-    // Convert translation
-    Eigen::Vector3d newT = conversion * cameraPose.translation.toVector();
-
-    return Pose3d(Translation3d::fromVector(newT), Rotation3d(newR));
-}
-
-// Convert a pose from field frame (FRC) to camera frame (OpenCV)
-inline Pose3d fieldToCamera(const Pose3d& fieldPose) {
-    Eigen::Matrix3d conversion = frcToOpenCV();
-
-    // Convert rotation
-    Eigen::Matrix3d newR = conversion * fieldPose.rotation.matrix * conversion.transpose();
-
-    // Convert translation
-    Eigen::Vector3d newT = conversion * fieldPose.translation.toVector();
-
-    return Pose3d(Translation3d::fromVector(newT), Rotation3d(newR));
-}
-
-} // namespace CoordinateSystem
 
 } // namespace vision

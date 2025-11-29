@@ -34,7 +34,6 @@ struct AprilTagConfig {
     bool refine_edges = true;
     int decision_margin = 35;
     int pose_iterations = 50;
-    bool multi_tag_enabled = false;
     double ransac_reproj_threshold = 0.1;
     std::string selected_field;
 

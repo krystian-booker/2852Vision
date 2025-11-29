@@ -4,6 +4,7 @@
 #include <chrono>
 #include <thread>
 #include <cmath>
+#include "utils/coordinate_system.hpp"
 
 namespace vision {
 
@@ -149,12 +150,15 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
     // Run detection
     zarray_t* detections = apriltag_detector_detect(detector_.get(), &im);
 
-    // Collect valid detections first (before cloning frame)
-    struct DetectionData {
-        apriltag_detection_t* det;
-        std::vector<cv::Point> corners;
-    };
-    std::vector<DetectionData> validDetections;
+    // Clone frame for annotation
+    if (frame.channels() == 1) {
+        cv::cvtColor(frame, result.annotatedFrame, cv::COLOR_GRAY2BGR);
+    } else {
+        result.annotatedFrame = frame.clone();
+    }
+
+    // Collect valid detections for global solver
+    std::vector<TagDetection> validDetectionsForSolver;
 
     for (int i = 0; i < zarray_size(detections); i++) {
         apriltag_detection_t* det;
@@ -165,62 +169,31 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
             continue;
         }
 
-        DetectionData data;
-        data.det = det;
+        // Draw visuals
+        std::vector<cv::Point> drawCorners;
         for (int j = 0; j < 4; j++) {
-            data.corners.push_back(cv::Point(
-                static_cast<int>(det->p[j][0]),
-                static_cast<int>(det->p[j][1])
-            ));
+            drawCorners.push_back(cv::Point(static_cast<int>(det->p[j][0]), static_cast<int>(det->p[j][1])));
         }
-        validDetections.push_back(std::move(data));
-    }
+        cv::polylines(result.annotatedFrame, drawCorners, true, cv::Scalar(0, 255, 0), 2);
+        cv::circle(result.annotatedFrame, cv::Point(static_cast<int>(det->c[0]), static_cast<int>(det->c[1])), 5, cv::Scalar(0, 0, 255), -1);
+        cv::putText(result.annotatedFrame, std::to_string(det->id), cv::Point(static_cast<int>(det->c[0] - 10), static_cast<int>(det->c[1] - 10)), cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(255, 0, 0), 2);
 
-    // Clone frame for annotation, ensuring it's BGR for colored drawing
-    if (frame.channels() == 1) {
-        cv::cvtColor(frame, result.annotatedFrame, cv::COLOR_GRAY2BGR);
-    } else {
-        result.annotatedFrame = frame.clone();
-    }
-
-    // Process and draw each valid detection
-    for (const auto& data : validDetections) {
-        apriltag_detection_t* det = data.det;
-        const auto& corners = data.corners;
-
-        // Draw polygon
-        cv::polylines(result.annotatedFrame, corners, true, cv::Scalar(0, 255, 0), 2);
-
-        // Draw center point
-        cv::circle(result.annotatedFrame,
-                   cv::Point(static_cast<int>(det->c[0]), static_cast<int>(det->c[1])),
-                   5, cv::Scalar(0, 0, 255), -1);
-
-        // Draw ID
-        cv::putText(result.annotatedFrame,
-                    std::to_string(det->id),
-                    cv::Point(static_cast<int>(det->c[0] - 10), static_cast<int>(det->c[1] - 10)),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(255, 0, 0), 2);
-
-        // Build detection JSON
+        // Build basic detection JSON
         nlohmann::json detection;
         detection["id"] = det->id;
         detection["decision_margin"] = det->decision_margin;
         detection["hamming"] = det->hamming;
         detection["center"] = {det->c[0], det->c[1]};
-
-        // Corners
+        
         nlohmann::json cornersJson = nlohmann::json::array();
         for (int j = 0; j < 4; j++) {
             cornersJson.push_back({det->p[j][0], det->p[j][1]});
         }
         detection["corners"] = cornersJson;
 
-        // Pose estimation if calibrated
+        // --- PART A: Individual Tag Solve (Tag-Relative) ---
         if (hasCalibration_) {
             // 3D Object Points for the tag (centered at origin, z=0)
-            // Order: bottom-left, bottom-right, top-right, top-left (CCW)
-            // Note: In camera coordinates (Y-down), Bottom-Left is (-half, +half)
             double halfSize = config_.tag_size_m / 2.0;
             std::vector<cv::Point3f> objectPoints = {
                 cv::Point3f(-halfSize,  halfSize, 0), // Bottom-Left
@@ -229,108 +202,57 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
                 cv::Point3f(-halfSize, -halfSize, 0)  // Top-Left
             };
 
-            // Image Points from detection
             std::vector<cv::Point2f> imagePoints;
-            for (const auto& corner : data.corners) {
-                imagePoints.push_back(corner);
+            for (int j = 0; j < 4; j++) {
+                imagePoints.push_back(cv::Point2f(static_cast<float>(det->p[j][0]), static_cast<float>(det->p[j][1])));
             }
 
             cv::Vec3d rvec, tvec;
-            // Use SQPNP as it is robust and accurate, avoiding the strict point ordering checks of IPPE_SQUARE
             bool success = cv::solvePnP(objectPoints, imagePoints, cameraMatrix_, distCoeffs_, rvec, tvec, false, cv::SOLVEPNP_SQPNP);
 
             if (success) {
-                // Convert rotation vector to rotation matrix
-                cv::Mat R;
-                cv::Rodrigues(rvec, R);
-
-                // Extract translation
-                detection["pose"] = {
-                    {"x", tvec[0]},
-                    {"y", tvec[1]},
-                    {"z", tvec[2]},
-                    {"error", 0.0} // solvePnP doesn't return error directly
-                };
-
-                // Calculate Euler angles (Roll, Pitch, Yaw)
-                // R = [ r00 r01 r02 ]
-                //     [ r10 r11 r12 ]
-                //     [ r20 r21 r22 ]
-                double r00 = R.at<double>(0, 0);
-                double r10 = R.at<double>(1, 0);
-                double r20 = R.at<double>(2, 0);
-                double r21 = R.at<double>(2, 1);
-                double r22 = R.at<double>(2, 2);
-
-                double pitch = std::atan2(r21, r22);
-                double yaw = std::atan2(-r20, std::sqrt(r21*r21 + r22*r22));
-                double roll = std::atan2(r10, r00);
-
-                // Convert to degrees
-                double pitchDeg = pitch * 180.0 / M_PI;
-                double yawDeg = yaw * 180.0 / M_PI;
-                double rollDeg = roll * 180.0 / M_PI;
-
-                // Add 3D pose object
-                detection["pose_3d"] = {
-                    {"translation", {
-                        {"x", tvec[0]},
-                        {"y", tvec[1]},
-                        {"z", tvec[2]}
-                    }},
-                    {"rotation", {
-                        {"roll", rollDeg},
-                        {"pitch", pitchDeg},
-                        {"yaw", yawDeg}
-                    }}
-                };
-
-                // Extract rotation matrix for JSON
-                nlohmann::json rotation = nlohmann::json::array();
-                for (int r = 0; r < 3; r++) {
-                    nlohmann::json row = nlohmann::json::array();
-                    for (int c = 0; c < 3; c++) {
-                        row.push_back(R.at<double>(r, c));
-                    }
-                    rotation.push_back(row);
-                }
-                detection["rotation"] = rotation;
+                // Convert to Pose3d (Camera-Relative)
+                // Note: This is the pose of the TAG in CAMERA coordinates
+                Pose3d tagPose = Pose3d::fromOpenCV(rvec, tvec);
+                detection["pose_relative"] = tagPose.toJson();
 
                 // Draw 3D Cube
                 double size = config_.tag_size_m;
                 std::vector<cv::Point3f> cubePoints = {
-                    // Base (Z=0)
-                    cv::Point3f(-halfSize, -halfSize, 0),
-                    cv::Point3f( halfSize, -halfSize, 0),
-                    cv::Point3f( halfSize,  halfSize, 0),
-                    cv::Point3f(-halfSize,  halfSize, 0),
-                    // Top (Z=-size)
-                    cv::Point3f(-halfSize, -halfSize, -size),
-                    cv::Point3f( halfSize, -halfSize, -size),
-                    cv::Point3f( halfSize,  halfSize, -size),
-                    cv::Point3f(-halfSize,  halfSize, -size)
+                    cv::Point3f(-halfSize, -halfSize, 0), cv::Point3f( halfSize, -halfSize, 0),
+                    cv::Point3f( halfSize,  halfSize, 0), cv::Point3f(-halfSize,  halfSize, 0),
+                    cv::Point3f(-halfSize, -halfSize, -size), cv::Point3f( halfSize, -halfSize, -size),
+                    cv::Point3f( halfSize,  halfSize, -size), cv::Point3f(-halfSize,  halfSize, -size)
                 };
-
                 std::vector<cv::Point2f> imagePointsCube;
                 cv::projectPoints(cubePoints, rvec, tvec, cameraMatrix_, distCoeffs_, imagePointsCube);
-
-                // Draw lines
                 cv::Scalar cubeColor(0, 255, 0);
-                int thickness = 2;
-
-                // Pillars
-                for (int i = 0; i < 4; i++) {
-                    cv::line(result.annotatedFrame, imagePointsCube[i], imagePointsCube[i+4], cubeColor, thickness);
-                }
-
-                // Top face
-                for (int i = 0; i < 4; i++) {
-                    cv::line(result.annotatedFrame, imagePointsCube[i+4], imagePointsCube[((i+1)%4)+4], cubeColor, thickness);
+                for (int k = 0; k < 4; k++) {
+                    cv::line(result.annotatedFrame, imagePointsCube[k], imagePointsCube[k+4], cubeColor, 2);
+                    cv::line(result.annotatedFrame, imagePointsCube[k+4], imagePointsCube[((k+1)%4)+4], cubeColor, 2);
                 }
             }
         }
 
         result.detections.push_back(detection);
+
+        // --- PART B: Prep for Global Solve (Field-Relative) ---
+        if (fieldLayout_ && fieldLayout_->hasTag(det->id)) {
+            TagDetection tagData;
+            tagData.id = det->id;
+            for (int j = 0; j < 4; j++) {
+                tagData.corners.push_back(cv::Point2f(static_cast<float>(det->p[j][0]), static_cast<float>(det->p[j][1])));
+            }
+            validDetectionsForSolver.push_back(tagData);
+        }
+    }
+
+    // --- PART C: Global Solve (Multi-Tag Logic) ---
+    if (hasCalibration_ && !validDetectionsForSolver.empty()) {
+        MultiTagResult globalPose = solveMultiTagPose(validDetectionsForSolver, frame.size());
+        if (globalPose.valid) {
+            result.robotPose = globalPose.robotPose;
+        }
     }
 
     // Cleanup detections
@@ -387,6 +309,19 @@ void AprilTagPipeline::updateConfig(const nlohmann::json& config) {
 
     spdlog::info("AprilTag config updated - family: {}, threads: {}, decimate: {:.1f}",
                  config_.family, detector_->nthreads, config_.decimate);
+
+    // Update field layout if changed
+    if (!config_.selected_field.empty()) {
+        auto layout = FieldLayoutService::instance().getFieldLayout(config_.selected_field);
+        if (layout) {
+            setFieldLayout(*layout);
+        } else {
+            spdlog::warn("Selected field layout '{}' not found", config_.selected_field);
+            fieldLayout_.reset();
+        }
+    } else {
+        fieldLayout_.reset();
+    }
 }
 
 void AprilTagPipeline::setFieldLayout(const FieldLayout& layout) {
@@ -461,39 +396,35 @@ MultiTagResult AprilTagPipeline::solveMultiTagPose(const std::vector<TagDetectio
         return result;  // Need at least one tag
     }
 
-
     // Solve PnP
     cv::Vec3d rvec, tvec;
-    bool useExtrinsicGuess = hasPrevPose_ && objectPoints.size() >= 8;  // Use guess if multiple tags
-
-    if (useExtrinsicGuess) {
-        rvec = prevRvec_;
-        tvec = prevTvec_;
-    }
-
-    cv::Mat inliers;
     bool success = false;
 
-    if (config_.multi_tag_enabled && objectPoints.size() >= 8) {
-        // Use RANSAC for multiple tags
+    // STRATEGY 1: Multi-Tag (8+ points)
+    // The geometry is rigid, so the solution is usually unique and stable.
+    if (objectPoints.size() >= 8) {
+        // Use RANSAC to throw out a tag if it's jittery/garbage
+        cv::Mat inliers;
         success = cv::solvePnPRansac(
             objectPoints, imagePoints,
             cameraMatrix_, distCoeffs_,
             rvec, tvec,
-            useExtrinsicGuess,
+            hasPrevPose_, // Use previous frame as guess
             100,  // iterations
             static_cast<float>(config_.ransac_reproj_threshold),
             0.99,  // confidence
             inliers,
             cv::SOLVEPNP_SQPNP
         );
-    } else {
+    } 
+    // STRATEGY 2: Single-Tag (4 points)
+    else {
         // Use regular solvePnP for single tag
         success = cv::solvePnP(
             objectPoints, imagePoints,
             cameraMatrix_, distCoeffs_,
             rvec, tvec,
-            useExtrinsicGuess,
+            hasPrevPose_,
             cv::SOLVEPNP_SQPNP
         );
     }
@@ -514,13 +445,11 @@ MultiTagResult AprilTagPipeline::solveMultiTagPose(const std::vector<TagDetectio
     }
     result.reprojectionError = totalError / imagePoints.size();
 
-    // Convert to Pose3d
-    // Note: rvec/tvec give the transformation from field to camera
-    // We want camera pose in field, so we need to invert
-    Pose3d cameraInField = Pose3d::fromOpenCV(rvec, tvec).inverse();
+    // Convert directly from OpenCV PnP result to FRC Field Coordinates
+    // This returns the position of the CAMERA on the FIELD.
+    // The RoboRIO will handle adding the robot-to-camera offset.
+    result.robotPose = CoordinateUtils::solvePnPToFieldPose(rvec, tvec);
 
-    // Convert from OpenCV coordinates to FRC field coordinates
-    result.robotPose = CoordinateSystem::cameraToField(cameraInField);
     result.valid = true;
     result.tagsUsed = static_cast<int>(usedTagIds.size());
     result.tagIds = usedTagIds;

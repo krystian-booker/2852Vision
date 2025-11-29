@@ -1,5 +1,6 @@
 #pragma once
 
+#include "utils/geometry.hpp"
 #include "models/pipeline.hpp"
 #include "utils/frame_buffer.hpp"
 #include <nlohmann/json.hpp>
@@ -13,6 +14,7 @@ struct PipelineResult {
     nlohmann::json detections;  // Pipeline-specific detection data
     cv::Mat annotatedFrame;     // Frame with overlays drawn
     double processingTimeMs = 0;
+    std::optional<Pose3d> robotPose; // Global robot pose (if available)
 };
 
 class BasePipeline {
