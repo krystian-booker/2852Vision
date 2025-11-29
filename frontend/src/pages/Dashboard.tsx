@@ -23,7 +23,6 @@ const APRILTAG_DEFAULTS: PipelineConfig = {
   family: 'tag36h11',
   tag_size_m: 0.165,
   threads: 4,
-  auto_threads: true,
   decimate: 1,
   blur: 0,
   refine_edges: true,

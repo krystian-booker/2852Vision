@@ -34,7 +34,6 @@ export interface PipelineConfig {
   family?: string
   tag_size_m?: number
   threads?: number
-  auto_threads?: boolean
   decimate?: number
   blur?: number
   refine_edges?: boolean

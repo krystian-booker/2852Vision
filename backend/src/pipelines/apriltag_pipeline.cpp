@@ -87,11 +87,7 @@ void AprilTagPipeline::initializeDetector() {
     apriltag_detector_add_family(detector_.get(), family_.get());
 
     // Configure detector parameters
-    if (config_.auto_threads) {
-        detector_->nthreads = static_cast<int>(std::thread::hardware_concurrency());
-    } else {
-        detector_->nthreads = config_.threads;
-    }
+    detector_->nthreads = config_.threads;
 
     detector_->quad_decimate = config_.decimate;
     detector_->quad_sigma = config_.blur;
@@ -282,11 +278,7 @@ void AprilTagPipeline::updateConfig(const nlohmann::json& config) {
     // Configure new detector
     apriltag_detector_add_family(newDetector.get(), newFamily.get());
 
-    if (newConfig.auto_threads) {
-        newDetector->nthreads = static_cast<int>(std::thread::hardware_concurrency());
-    } else {
-        newDetector->nthreads = newConfig.threads;
-    }
+    newDetector->nthreads = newConfig.threads;
 
     newDetector->quad_decimate = newConfig.decimate;
     newDetector->quad_sigma = newConfig.blur;

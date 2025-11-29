@@ -9,7 +9,6 @@ nlohmann::json AprilTagConfig::toJson() const {
         {"family", family},
         {"tag_size_m", tag_size_m},
         {"threads", threads},
-        {"auto_threads", auto_threads},
         {"decimate", decimate},
         {"blur", blur},
         {"refine_edges", refine_edges},
@@ -25,7 +24,6 @@ AprilTagConfig AprilTagConfig::fromJson(const nlohmann::json& j) {
     cfg.family = j.value("family", "tag36h11");
     cfg.tag_size_m = j.value("tag_size_m", 0.1524);
     cfg.threads = j.value("threads", 4);
-    cfg.auto_threads = j.value("auto_threads", true);
     cfg.decimate = j.value("decimate", 2.0);
     cfg.blur = j.value("blur", 0.0);
     cfg.refine_edges = j.value("refine_edges", true);
