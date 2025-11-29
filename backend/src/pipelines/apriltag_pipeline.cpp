@@ -119,6 +119,9 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
     PipelineResult result;
     result.detections = nlohmann::json::array();
 
+    // Lock for thread safety
+    std::lock_guard<std::mutex> lock(mutex_);
+
     if (!detector_ || !family_) {
         spdlog::warn("AprilTag detector not initialized");
         result.annotatedFrame = frame.clone();
@@ -369,14 +372,18 @@ void AprilTagPipeline::updateConfig(const nlohmann::json& config) {
     newDetector->decode_sharpening = 0.25;
 
     // Now swap - this won't throw
-    // Remove family from old detector before destruction
-    if (detector_ && family_) {
-        apriltag_detector_remove_family(detector_.get(), family_.get());
-    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        
+        // Remove family from old detector before destruction
+        if (detector_ && family_) {
+            apriltag_detector_remove_family(detector_.get(), family_.get());
+        }
 
-    config_ = std::move(newConfig);
-    family_ = std::move(newFamily);
-    detector_ = std::move(newDetector);
+        config_ = std::move(newConfig);
+        family_ = std::move(newFamily);
+        detector_ = std::move(newDetector);
+    }
 
     spdlog::info("AprilTag config updated - family: {}, threads: {}, decimate: {:.1f}",
                  config_.family, detector_->nthreads, config_.decimate);

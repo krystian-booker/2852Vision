@@ -100,6 +100,9 @@ private:
     AprilTagDetectorPtr detector_;
     AprilTagFamilyPtr family_;
 
+    // Mutex for thread safety during reconfiguration
+    std::mutex mutex_;
+
 
     // Field layout for multi-tag pose
     std::optional<FieldLayout> fieldLayout_;

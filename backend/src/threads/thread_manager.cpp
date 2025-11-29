@@ -607,6 +607,16 @@ void ThreadManager::updateCalibration(int cameraId, const cv::Mat& cameraMatrix,
     }
 }
 
+void ThreadManager::updatePipelineConfig(int pipelineId, const nlohmann::json& config) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    auto it = visionThreads_.find(pipelineId);
+    if (it != visionThreads_.end() && it->second->isRunning()) {
+        it->second->updateConfig(config);
+        spdlog::info("Updated configuration for running pipeline {}", pipelineId);
+    }
+}
+
 FramePtr ThreadManager::getCameraFrame(int cameraId) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = cameraThreads_.find(cameraId);

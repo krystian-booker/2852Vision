@@ -166,6 +166,9 @@ public:
     // Update calibration for all pipelines associated with a camera
     void updateCalibration(int cameraId, const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs);
 
+    // Update pipeline configuration for a running pipeline
+    void updatePipelineConfig(int pipelineId, const nlohmann::json& config);
+
     // Get frames for streaming
     FramePtr getCameraFrame(int cameraId);
     FramePtr getPipelineFrame(int pipelineId);
