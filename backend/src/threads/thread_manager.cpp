@@ -111,8 +111,32 @@ FramePtr CameraThread::getDisplayFrame() {
     return displayFrame_;
 }
 
+Camera CameraThread::getCamera() const {
+    std::lock_guard<std::mutex> lock(settingsMutex_);
+    return camera_;
+}
+
+void CameraThread::updateSettings(const Camera& camera) {
+    std::lock_guard<std::mutex> lock(settingsMutex_);
+    // Only update settings that can be changed on the fly
+    // We keep the ID and other structural properties to ensure consistency
+    if (camera_.id != camera.id) {
+        spdlog::warn("Attempted to update camera settings with mismatched ID (current: {}, new: {})", 
+            camera_.id, camera.id);
+        return;
+    }
+
+    camera_.orientation = camera.orientation;
+    camera_.exposure_mode = camera.exposure_mode;
+    camera_.exposure_value = camera.exposure_value;
+    camera_.gain_mode = camera.gain_mode;
+    camera_.gain_value = camera.gain_value;
+}
+
 void CameraThread::run() {
-    spdlog::info("Camera thread run loop started for camera {}", camera_.id);
+    // Cache ID to avoid locking for every log message
+    int cameraId = camera_.id;
+    spdlog::info("Camera thread run loop started for camera {}", cameraId);
 
     auto startTime = std::chrono::steady_clock::now();
     bool firstFrameReceived = false;
@@ -127,7 +151,7 @@ void CameraThread::run() {
         // Try to connect if not connected
         if (!driver_->isConnected()) {
              if (driver_->connect(connectionErrorLogged)) {
-                 spdlog::info("Connected to camera {}", camera_.id);
+                 spdlog::info("Connected to camera {}", cameraId);
                  connectionErrorLogged = false;
              } else {
                  if (!connectionErrorLogged) {
@@ -141,7 +165,7 @@ void CameraThread::run() {
                      cv::putText(placeholder, "Camera Connecting...", cv::Point(160, 240), 
                          cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 255), 2);
                      StreamerService::instance().publishFrame(
-                         "/camera/" + std::to_string(camera_.id),
+                         "/camera/" + std::to_string(cameraId),
                          placeholder
                      );
                  }
@@ -164,14 +188,14 @@ void CameraThread::run() {
                 // Instead of stopping, just log and publish a placeholder every second
                 if (elapsed > INITIAL_FRAME_TIMEOUT_MS && emptyFrameCount % 100 == 0) {
                     spdlog::warn("Camera {} waiting for first frame... ({} empty frames, {}ms elapsed)",
-                        camera_.id, emptyFrameCount, elapsed);
+                        cameraId, emptyFrameCount, elapsed);
                     
                     // Publish placeholder to keep stream alive
                     cv::Mat placeholder = cv::Mat::zeros(480, 640, CV_8UC3);
                     cv::putText(placeholder, "Waiting for frames...", cv::Point(160, 240), 
                         cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 255), 2);
                     StreamerService::instance().publishFrame(
-                        "/camera/" + std::to_string(camera_.id),
+                        "/camera/" + std::to_string(cameraId),
                         placeholder
                     );
                 }
@@ -186,7 +210,7 @@ void CameraThread::run() {
             firstFrameReceived = true;
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - startTime).count();
-            spdlog::info("Camera {} received first frame after {}ms", camera_.id, elapsed);
+            spdlog::info("Camera {} received first frame after {}ms", cameraId, elapsed);
         }
 
         totalFrameCount++;
@@ -194,7 +218,7 @@ void CameraThread::run() {
         // Periodic logging
         if (totalFrameCount % LOG_INTERVAL == 0) {
             spdlog::debug("Camera {} frame count: {}, empty frames: {}",
-                camera_.id, totalFrameCount, emptyFrameCount);
+                cameraId, totalFrameCount, emptyFrameCount);
         }
 
         // Apply orientation
@@ -215,7 +239,7 @@ void CameraThread::run() {
 
         // Publish to MJPEG streamer
         StreamerService::instance().publishFrame(
-            "/camera/" + std::to_string(camera_.id),
+            "/camera/" + std::to_string(cameraId),
             frame->color()
         );
 
@@ -229,11 +253,17 @@ void CameraThread::run() {
     }
 
     spdlog::info("Camera thread run loop ended for camera {} (total frames: {}, empty: {})",
-        camera_.id, totalFrameCount, emptyFrameCount);
+        cameraId, totalFrameCount, emptyFrameCount);
 }
 
 void CameraThread::applyOrientation(cv::Mat& frame) {
-    switch (camera_.orientation) {
+    int orientation;
+    {
+        std::lock_guard<std::mutex> lock(settingsMutex_);
+        orientation = camera_.orientation;
+    }
+
+    switch (orientation) {
         case 90:
             cv::rotate(frame, frame, cv::ROTATE_90_CLOCKWISE);
             break;
@@ -635,6 +665,16 @@ void ThreadManager::updatePipelineConfig(int pipelineId, const nlohmann::json& c
     if (it != visionThreads_.end() && it->second->isRunning()) {
         it->second->updateConfig(config);
         spdlog::info("Updated configuration for running pipeline {}", pipelineId);
+    }
+}
+
+void ThreadManager::updateCameraSettings(const Camera& camera) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    auto it = cameraThreads_.find(camera.id);
+    if (it != cameraThreads_.end() && it->second->isRunning()) {
+        it->second->updateSettings(camera);
+        spdlog::info("Updated settings for running camera {}", camera.id);
     }
 }
 

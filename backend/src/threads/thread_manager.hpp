@@ -70,13 +70,17 @@ public:
     int cameraId() const { return camera_.id; }
 
     // Get camera object
-    const Camera& getCamera() const { return camera_; }
+    Camera getCamera() const;
+
+    // Update camera settings (orientation, exposure, etc.)
+    void updateSettings(const Camera& camera);
 
 private:
     void run();
     void applyOrientation(cv::Mat& frame);
 
     Camera camera_;
+    mutable std::mutex settingsMutex_; // Protects camera_ access
     std::unique_ptr<BaseDriver> driver_;
     std::atomic<bool> running_{false};
     std::thread thread_;
@@ -168,6 +172,9 @@ public:
 
     // Update calibration for all pipelines associated with a camera
     void updateCalibration(int cameraId, const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs);
+
+    // Update camera settings for a running camera
+    void updateCameraSettings(const Camera& camera);
 
     // Update pipeline configuration for a running pipeline
     void updatePipelineConfig(int pipelineId, const nlohmann::json& config);

@@ -362,6 +362,13 @@ void CamerasController::registerRoutes(drogon::HttpAppFramework& app) {
 
                 if (CameraService::instance().updateCameraControls(
                         id, orientation, exposureMode, exposureValue, gainMode, gainValue)) {
+                    
+                    // Notify thread manager of update
+                    auto cameraOpt = CameraService::instance().getCameraById(id);
+                    if (cameraOpt) {
+                        ThreadManager::instance().updateCameraSettings(*cameraOpt);
+                    }
+
                     auto resp = HttpResponse::newHttpResponse();
                     resp->setStatusCode(k200OK);
                     resp->setContentTypeCode(CT_APPLICATION_JSON);
