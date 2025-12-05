@@ -84,7 +84,40 @@ interface CameraControls {
 interface PipelineResults {
   apriltag: any[]
   ml: any[]
-  multiTag: any | null
+  robotPose: any | null
+  processingTimeMs: number | null
+}
+
+// Convert quaternion to Euler angles (pitch, roll, yaw) in degrees
+function quaternionToEuler(q: { W: number; X: number; Y: number; Z: number }): { pitch: number; roll: number; yaw: number } {
+  const { W: w, X: x, Y: y, Z: z } = q
+
+  // Roll (x-axis rotation)
+  const sinr_cosp = 2 * (w * x + y * z)
+  const cosr_cosp = 1 - 2 * (x * x + y * y)
+  const roll = Math.atan2(sinr_cosp, cosr_cosp)
+
+  // Pitch (y-axis rotation)
+  const sinp = 2 * (w * y - z * x)
+  let pitch: number
+  if (Math.abs(sinp) >= 1) {
+    pitch = Math.sign(sinp) * (Math.PI / 2) // Use 90 degrees if out of range
+  } else {
+    pitch = Math.asin(sinp)
+  }
+
+  // Yaw (z-axis rotation)
+  const siny_cosp = 2 * (w * z + x * y)
+  const cosy_cosp = 1 - 2 * (y * y + z * z)
+  const yaw = Math.atan2(siny_cosp, cosy_cosp)
+
+  // Convert to degrees
+  const toDegrees = (rad: number) => (rad * 180) / Math.PI
+  return {
+    pitch: toDegrees(pitch),
+    roll: toDegrees(roll),
+    yaw: toDegrees(yaw),
+  }
 }
 
 export default function Dashboard() {
@@ -118,7 +151,8 @@ export default function Dashboard() {
   const [results, setResults] = useState<PipelineResults>({
     apriltag: [],
     ml: [],
-    multiTag: null,
+    robotPose: null,
+    processingTimeMs: null,
   })
 
   // Modal states
@@ -222,7 +256,7 @@ export default function Dashboard() {
     if (!selectedPipelineId) {
       setPipelineType('')
       setPipelineConfig({})
-      setResults({ apriltag: [], ml: [], multiTag: null })
+      setResults({ apriltag: [], ml: [], robotPose: null, processingTimeMs: null })
       updateFeedSource()
       return
     }
@@ -443,21 +477,30 @@ export default function Dashboard() {
         ? data.find((r: any) => String(r.pipeline_id) === String(selectedPipelineId))
         : data?.[selectedPipelineId]
       if (!pipelineResults) {
-        setResults({ apriltag: [], ml: [], multiTag: null })
+        setResults({ apriltag: [], ml: [], robotPose: null, processingTimeMs: null })
         return
       }
 
       if (pipelineType === 'AprilTag') {
+        // Transform detections to include Euler angles
+        const detections = (pipelineResults.detections || []).map((det: any) => {
+          const euler = det.pose_relative?.rotation?.quaternion
+            ? quaternionToEuler(det.pose_relative.rotation.quaternion)
+            : null
+          return { ...det, euler }
+        })
         setResults({
-          apriltag: pipelineResults.detections || [],
+          apriltag: detections,
           ml: [],
-          multiTag: pipelineResults.multi_tag_pose || null,
+          robotPose: pipelineResults.robot_pose || null,
+          processingTimeMs: pipelineResults.processing_time_ms || null,
         })
       } else if (pipelineType === 'Object Detection (ML)') {
         setResults({
           apriltag: [],
           ml: pipelineResults.detections || [],
-          multiTag: null,
+          robotPose: null,
+          processingTimeMs: pipelineResults.processing_time_ms || null,
         })
       }
     } catch (error) {
@@ -823,7 +866,7 @@ export default function Dashboard() {
         </CardHeader>
         <CardContent>
           {pipelineType === 'AprilTag' && (
-            <AprilTagForm config={pipelineConfig} onChange={queueConfigSave} results={results.apriltag} multiTag={results.multiTag} />
+            <AprilTagForm config={pipelineConfig} onChange={queueConfigSave} results={results.apriltag} robotPose={results.robotPose} processingTimeMs={results.processingTimeMs} />
           )}
           {pipelineType === 'Coloured Shape' && <ColouredShapeForm config={pipelineConfig} onChange={queueConfigSave} />}
           {pipelineType === 'Object Detection (ML)' && (
@@ -921,12 +964,14 @@ function AprilTagForm({
   config,
   onChange,
   results,
-  multiTag,
+  robotPose,
+  processingTimeMs,
 }: {
   config: PipelineConfig
   onChange: (updates: Partial<PipelineConfig>) => void
   results: any[]
-  multiTag: any | null
+  robotPose: any | null
+  processingTimeMs: number | null
 }) {
   return (
     <div className="space-y-6">
@@ -1100,12 +1145,12 @@ function AprilTagForm({
                   results.map((target: any, index: number) => (
                     <TableRow key={target.id ?? index}>
                       <TableCell>{target.id ?? index}</TableCell>
-                      <TableCell>{target.pose_3d?.translation?.x?.toFixed(3) ?? 'N/A'}</TableCell>
-                      <TableCell>{target.pose_3d?.translation?.y?.toFixed(3) ?? 'N/A'}</TableCell>
-                      <TableCell>{target.pose_3d?.translation?.z?.toFixed(3) ?? 'N/A'}</TableCell>
-                      <TableCell>{target.pose_3d?.rotation?.pitch?.toFixed(2) ?? 'N/A'}</TableCell>
-                      <TableCell>{target.pose_3d?.rotation?.roll?.toFixed(2) ?? 'N/A'}</TableCell>
-                      <TableCell>{target.pose_3d?.rotation?.yaw?.toFixed(2) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_relative?.translation?.x?.toFixed(3) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_relative?.translation?.y?.toFixed(3) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.pose_relative?.translation?.z?.toFixed(3) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.euler?.pitch?.toFixed(2) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.euler?.roll?.toFixed(2) ?? 'N/A'}</TableCell>
+                      <TableCell>{target.euler?.yaw?.toFixed(2) ?? 'N/A'}</TableCell>
                     </TableRow>
                   ))
                 )}
@@ -1113,16 +1158,45 @@ function AprilTagForm({
             </Table>
           </div>
 
-          {multiTag && (
-            <div className="p-4 bg-surface rounded-lg space-y-2">
-              <h4 className="font-semibold text-sm">Multi-Tag Pose</h4>
-              <div className="grid grid-cols-2 gap-2 text-sm">
+          {robotPose && (
+            <div className="p-4 bg-surface rounded-lg space-y-3">
+              <h4 className="font-semibold text-sm">Robot Pose (Field Coordinates)</h4>
+              <div className="grid grid-cols-3 gap-3 text-sm">
                 <div>
-                  <span className="text-muted-foreground">Tags used:</span> {multiTag.tag_ids_used?.length ?? 0}
+                  <span className="text-muted-foreground">X:</span> {robotPose.translation?.x?.toFixed(3) ?? 'N/A'} m
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Inliers:</span> {multiTag.num_inliers ?? 0}
+                  <span className="text-muted-foreground">Y:</span> {robotPose.translation?.y?.toFixed(3) ?? 'N/A'} m
                 </div>
+                <div>
+                  <span className="text-muted-foreground">Z:</span> {robotPose.translation?.z?.toFixed(3) ?? 'N/A'} m
+                </div>
+              </div>
+              {robotPose.rotation?.quaternion && (() => {
+                const euler = quaternionToEuler(robotPose.rotation.quaternion)
+                return (
+                  <div className="grid grid-cols-3 gap-3 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Pitch:</span> {euler.pitch.toFixed(2)}°
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Roll:</span> {euler.roll.toFixed(2)}°
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Yaw:</span> {euler.yaw.toFixed(2)}°
+                    </div>
+                  </div>
+                )
+              })()}
+              <div className="grid grid-cols-2 gap-3 text-sm border-t pt-2">
+                <div>
+                  <span className="text-muted-foreground">Tags used:</span> {results.length}
+                </div>
+                {processingTimeMs !== null && (
+                  <div>
+                    <span className="text-muted-foreground">Processing:</span> {processingTimeMs.toFixed(1)} ms
+                  </div>
+                )}
               </div>
             </div>
           )}
