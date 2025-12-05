@@ -251,8 +251,17 @@ void RealSenseDriver::setGain(GainMode mode, int value) {
     if (!connected_ || !colorSensor_) return;
 
     try {
-        if (colorSensor_.supports(RS2_OPTION_GAIN)) {
-            colorSensor_.set_option(RS2_OPTION_GAIN, static_cast<float>(value));
+        if (mode == GainMode::Auto) {
+            if (colorSensor_.supports(RS2_OPTION_ENABLE_AUTO_EXPOSURE)) {
+                colorSensor_.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 1);
+            }
+        } else {
+            if (colorSensor_.supports(RS2_OPTION_ENABLE_AUTO_EXPOSURE)) {
+                colorSensor_.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 0);
+            }
+            if (colorSensor_.supports(RS2_OPTION_GAIN)) {
+                colorSensor_.set_option(RS2_OPTION_GAIN, static_cast<float>(value));
+            }
         }
     } catch (const rs2::error& e) {
         spdlog::warn("Failed to set RealSense gain: {}", e.what());
@@ -279,6 +288,40 @@ int RealSenseDriver::getGain() const {
         }
     } catch (...) {}
     return 0;
+}
+
+BaseDriver::Range RealSenseDriver::getExposureRange() const {
+    if (!connected_ || !colorSensor_) return {0, 10000, 1, 500};
+
+    try {
+        if (colorSensor_.supports(RS2_OPTION_EXPOSURE)) {
+            auto range = colorSensor_.get_option_range(RS2_OPTION_EXPOSURE);
+            return {
+                static_cast<int>(range.min),
+                static_cast<int>(range.max),
+                static_cast<int>(range.step),
+                static_cast<int>(range.def)
+            };
+        }
+    } catch (...) {}
+    return {0, 10000, 1, 500};
+}
+
+BaseDriver::Range RealSenseDriver::getGainRange() const {
+    if (!connected_ || !colorSensor_) return {0, 100, 1, 0};
+
+    try {
+        if (colorSensor_.supports(RS2_OPTION_GAIN)) {
+            auto range = colorSensor_.get_option_range(RS2_OPTION_GAIN);
+            return {
+                static_cast<int>(range.min),
+                static_cast<int>(range.max),
+                static_cast<int>(range.step),
+                static_cast<int>(range.def)
+            };
+        }
+    } catch (...) {}
+    return {0, 100, 1, 0};
 }
 
 std::vector<DeviceInfo> RealSenseDriver::listDevices() {
@@ -417,6 +460,8 @@ void RealSenseDriver::setExposure(ExposureMode, int) {}
 void RealSenseDriver::setGain(GainMode, int) {}
 int RealSenseDriver::getExposure() const { return 0; }
 int RealSenseDriver::getGain() const { return 0; }
+BaseDriver::Range RealSenseDriver::getExposureRange() const { return {0, 10000, 1, 500}; }
+BaseDriver::Range RealSenseDriver::getGainRange() const { return {0, 100, 1, 0}; }
 
 std::vector<DeviceInfo> RealSenseDriver::listDevices() {
     spdlog::debug("RealSense support not compiled in");

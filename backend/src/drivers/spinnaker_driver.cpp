@@ -563,6 +563,46 @@ int SpinnakerDriver::getGain() const {
     return 0;
 }
 
+BaseDriver::Range SpinnakerDriver::getExposureRange() const {
+    if (!connected_ || !cameraPtr_) return {0, 10000, 1, 500};
+
+    try {
+        Spinnaker::GenApi::INodeMap& nodeMap = cameraPtr_->GetNodeMap();
+        Spinnaker::GenApi::CFloatPtr exposureTime = nodeMap.GetNode("ExposureTime");
+        
+        if (Spinnaker::GenApi::IsAvailable(exposureTime) && Spinnaker::GenApi::IsReadable(exposureTime)) {
+            // Spinnaker exposure is float, we cast to int
+            // Step might not be available for float, assume 1
+            return {
+                static_cast<int>(exposureTime->GetMin()),
+                static_cast<int>(exposureTime->GetMax()),
+                1, 
+                500 // Default fallback as we can't easily query "factory default"
+            };
+        }
+    } catch (...) {}
+    return {0, 10000, 1, 500};
+}
+
+BaseDriver::Range SpinnakerDriver::getGainRange() const {
+    if (!connected_ || !cameraPtr_) return {0, 100, 1, 0};
+
+    try {
+        Spinnaker::GenApi::INodeMap& nodeMap = cameraPtr_->GetNodeMap();
+        Spinnaker::GenApi::CFloatPtr gain = nodeMap.GetNode("Gain");
+        
+        if (Spinnaker::GenApi::IsAvailable(gain) && Spinnaker::GenApi::IsReadable(gain)) {
+            return {
+                static_cast<int>(gain->GetMin()),
+                static_cast<int>(gain->GetMax()),
+                1,
+                0 // Default fallback
+            };
+        }
+    } catch (...) {}
+    return {0, 100, 1, 0};
+}
+
 // ============================================================================
 // DEVICE DISCOVERY
 // ============================================================================
@@ -1092,6 +1132,8 @@ void SpinnakerDriver::setExposure(ExposureMode, int) {}
 void SpinnakerDriver::setGain(GainMode, int) {}
 int SpinnakerDriver::getExposure() const { return 0; }
 int SpinnakerDriver::getGain() const { return 0; }
+BaseDriver::Range SpinnakerDriver::getExposureRange() const { return {0, 10000, 1, 500}; }
+BaseDriver::Range SpinnakerDriver::getGainRange() const { return {0, 100, 1, 0}; }
 
 std::vector<DeviceInfo> SpinnakerDriver::listDevices() {
     spdlog::warn("Spinnaker support not compiled in");

@@ -205,6 +205,28 @@ bool CameraService::saveCalibration(int id, const std::string& cameraMatrixJson,
     });
 }
 
+bool CameraService::updateCameraAutoValues(int id, int exposureValue, int gainValue) {
+    auto& db = Database::instance();
+    return db.withLock([id, exposureValue, gainValue](SQLite::Database& sqlDb) {
+        SQLite::Statement stmt(sqlDb, R"(
+            UPDATE cameras SET
+                exposure_value = ?, gain_value = ?
+            WHERE id = ?
+        )");
+
+        stmt.bind(1, exposureValue);
+        stmt.bind(2, gainValue);
+        stmt.bind(3, id);
+
+        bool success = stmt.exec() > 0;
+        if (success) {
+            spdlog::debug("Synced auto values for camera {}: exposure={}, gain={}",
+                         id, exposureValue, gainValue);
+        }
+        return success;
+    });
+}
+
 std::vector<DeviceInfo> CameraService::discoverCameras(CameraType type) {
     switch (type) {
         case CameraType::USB: {

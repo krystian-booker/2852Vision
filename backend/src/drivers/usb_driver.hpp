@@ -22,6 +22,8 @@ public:
     void setGain(GainMode mode, int value) override;
     int getExposure() const override;
     int getGain() const override;
+    Range getExposureRange() const override;
+    Range getGainRange() const override;
 
     // Extended controls
     void setFocus(bool autoFocus, int value);

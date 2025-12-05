@@ -30,6 +30,9 @@ public:
     bool saveCalibration(int id, const std::string& cameraMatrixJson,
                          const std::string& distCoeffsJson, double reprojectionError);
 
+    // Auto mode value sync - updates only exposure/gain values (not modes)
+    bool updateCameraAutoValues(int id, int exposureValue, int gainValue);
+
     // Discovery
     std::vector<DeviceInfo> discoverCameras(CameraType type);
     std::vector<CameraProfile> getCameraProfiles(const std::string& identifier, CameraType type);

@@ -71,8 +71,14 @@ interface CameraControls {
   orientation: number
   exposure_mode: 'auto' | 'manual'
   exposure_value: number
+  exposure_min?: number
+  exposure_max?: number
+  exposure_step?: number
   gain_mode: 'auto' | 'manual'
   gain_value: number
+  gain_min?: number
+  gain_max?: number
+  gain_step?: number
 }
 
 interface PipelineResults {
@@ -98,8 +104,14 @@ export default function Dashboard() {
     orientation: 0,
     exposure_mode: 'auto',
     exposure_value: 500,
+    exposure_min: 0,
+    exposure_max: 10000,
+    exposure_step: 1,
     gain_mode: 'auto',
     gain_value: 50,
+    gain_min: 0,
+    gain_max: 100,
+    gain_step: 1,
   })
 
   const [pipelineConfig, setPipelineConfig] = useState<PipelineConfig>({})
@@ -191,8 +203,14 @@ export default function Dashboard() {
         orientation: data.orientation ?? 0,
         exposure_mode: data.exposure_mode || 'auto',
         exposure_value: data.exposure_value ?? 500,
+        exposure_min: data.exposure_min ?? 0,
+        exposure_max: data.exposure_max ?? 10000,
+        exposure_step: data.exposure_step ?? 1,
         gain_mode: data.gain_mode || 'auto',
         gain_value: data.gain_value ?? 50,
+        gain_min: data.gain_min ?? 0,
+        gain_max: data.gain_max ?? 100,
+        gain_step: data.gain_step ?? 1,
       })
     } catch (error) {
       console.error('Failed to load controls:', error)
@@ -674,8 +692,9 @@ export default function Dashboard() {
               <div className="flex gap-2">
                 <input
                   type="range"
-                  min="0"
-                  max="1000"
+                  min={controls.exposure_min ?? 0}
+                  max={controls.exposure_max ?? 10000}
+                  step={controls.exposure_step ?? 1}
                   value={controls.exposure_value}
                   onChange={(e) => queueControlsSave({ exposure_value: parseInt(e.target.value) })}
                   disabled={controls.exposure_mode !== 'manual'}
@@ -683,8 +702,9 @@ export default function Dashboard() {
                 />
                 <Input
                   type="number"
-                  min="0"
-                  max="1000"
+                  min={controls.exposure_min ?? 0}
+                  max={controls.exposure_max ?? 10000}
+                  step={controls.exposure_step ?? 1}
                   value={controls.exposure_value}
                   onChange={(e) => queueControlsSave({ exposure_value: parseInt(e.target.value) })}
                   disabled={controls.exposure_mode !== 'manual'}
@@ -715,8 +735,9 @@ export default function Dashboard() {
               <div className="flex gap-2">
                 <input
                   type="range"
-                  min="0"
-                  max="100"
+                  min={controls.gain_min ?? 0}
+                  max={controls.gain_max ?? 100}
+                  step={controls.gain_step ?? 1}
                   value={controls.gain_value}
                   onChange={(e) => queueControlsSave({ gain_value: parseInt(e.target.value) })}
                   disabled={controls.gain_mode !== 'manual'}
@@ -724,8 +745,9 @@ export default function Dashboard() {
                 />
                 <Input
                   type="number"
-                  min="0"
-                  max="100"
+                  min={controls.gain_min ?? 0}
+                  max={controls.gain_max ?? 100}
+                  step={controls.gain_step ?? 1}
                   value={controls.gain_value}
                   onChange={(e) => queueControlsSave({ gain_value: parseInt(e.target.value) })}
                   disabled={controls.gain_mode !== 'manual'}

@@ -329,6 +329,16 @@ int USBDriver::getGain() const {
     return static_cast<int>(cap_.get(cv::CAP_PROP_GAIN));
 }
 
+BaseDriver::Range USBDriver::getExposureRange() const {
+    // OpenCV does not expose range queries.
+    // Return a wide range to allow frontend flexibility.
+    return {-13, 10000, 1, -5}; 
+}
+
+BaseDriver::Range USBDriver::getGainRange() const {
+    return {0, 255, 1, 0};
+}
+
 int USBDriver::findDeviceIndex(bool silent) const {
     // If identifier is an integer, use it directly (legacy support)
     try {

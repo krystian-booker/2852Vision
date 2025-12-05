@@ -75,9 +75,18 @@ public:
     // Update camera settings (orientation, exposure, etc.)
     void updateSettings(const Camera& camera);
 
+    // Get exposure/gain ranges
+    BaseDriver::Range getExposureRange() const;
+    BaseDriver::Range getGainRange() const;
+
+    // Get current exposure/gain
+    int getExposure() const;
+    int getGain() const;
+
 private:
     void run();
     void applyOrientation(cv::Mat& frame);
+    void syncAutoValues();
 
     Camera camera_;
     mutable std::mutex settingsMutex_; // Protects camera_ access
@@ -175,6 +184,14 @@ public:
 
     // Update camera settings for a running camera
     void updateCameraSettings(const Camera& camera);
+
+    // Get camera exposure/gain ranges
+    BaseDriver::Range getCameraExposureRange(int cameraId);
+    BaseDriver::Range getCameraGainRange(int cameraId);
+
+    // Get current camera exposure/gain
+    int getCameraExposure(int cameraId);
+    int getCameraGain(int cameraId);
 
     // Update pipeline configuration for a running pipeline
     void updatePipelineConfig(int pipelineId, const nlohmann::json& config);

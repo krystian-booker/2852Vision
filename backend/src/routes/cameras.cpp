@@ -330,12 +330,37 @@ void CamerasController::registerRoutes(drogon::HttpAppFramework& app) {
                 return;
             }
 
+            auto& tm = ThreadManager::instance();
+            auto expRange = tm.getCameraExposureRange(id);
+            auto gainRange = tm.getCameraGainRange(id);
+
+            // If in auto mode, try to get the actual current values from the running camera
+            int exposureValue = camera->exposure_value;
+            int gainValue = camera->gain_value;
+
+            if (tm.isCameraRunning(id)) {
+                if (camera->exposure_mode == ExposureMode::Auto) {
+                    exposureValue = tm.getCameraExposure(id);
+                }
+                if (camera->gain_mode == GainMode::Auto) {
+                    gainValue = tm.getCameraGain(id);
+                }
+            }
+
             json result = {
                 {"orientation", camera->orientation},
                 {"exposure_mode", camera->exposure_mode},
-                {"exposure_value", camera->exposure_value},
+                {"exposure_value", exposureValue},
                 {"gain_mode", camera->gain_mode},
-                {"gain_value", camera->gain_value}
+                {"gain_value", gainValue},
+                {"exposure_min", expRange.min},
+                {"exposure_max", expRange.max},
+                {"exposure_step", expRange.step},
+                {"exposure_default", expRange.default_value},
+                {"gain_min", gainRange.min},
+                {"gain_max", gainRange.max},
+                {"gain_step", gainRange.step},
+                {"gain_default", gainRange.default_value}
             };
             auto resp = HttpResponse::newHttpResponse();
             resp->setStatusCode(k200OK);

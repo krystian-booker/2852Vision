@@ -1,4 +1,5 @@
 #include "threads/thread_manager.hpp"
+#include "services/camera_service.hpp"
 #include "services/pipeline_service.hpp"
 #include "services/streamer_service.hpp"
 #include "services/settings_service.hpp"
@@ -117,20 +118,46 @@ Camera CameraThread::getCamera() const {
 }
 
 void CameraThread::updateSettings(const Camera& camera) {
-    std::lock_guard<std::mutex> lock(settingsMutex_);
-    // Only update settings that can be changed on the fly
-    // We keep the ID and other structural properties to ensure consistency
-    if (camera_.id != camera.id) {
-        spdlog::warn("Attempted to update camera settings with mismatched ID (current: {}, new: {})", 
-            camera_.id, camera.id);
-        return;
+    bool triggerAutoSync = false;
+
+    {
+        std::lock_guard<std::mutex> lock(settingsMutex_);
+        // Only update settings that can be changed on the fly
+        // We keep the ID and other structural properties to ensure consistency
+        if (camera_.id != camera.id) {
+            spdlog::warn("Attempted to update camera settings with mismatched ID (current: {}, new: {})",
+                camera_.id, camera.id);
+            return;
+        }
+
+        // Check if we're switching from Manual to Auto
+        if ((camera_.exposure_mode == ExposureMode::Manual && camera.exposure_mode == ExposureMode::Auto) ||
+            (camera_.gain_mode == GainMode::Manual && camera.gain_mode == GainMode::Auto)) {
+            triggerAutoSync = true;
+        }
+
+        camera_.orientation = camera.orientation;
+        camera_.exposure_mode = camera.exposure_mode;
+        camera_.exposure_value = camera.exposure_value;
+        camera_.gain_mode = camera.gain_mode;
+        camera_.gain_value = camera.gain_value;
+
+        // Apply settings to driver immediately if connected
+        if (driver_->isConnected()) {
+            driver_->setExposure(camera_.exposure_mode, camera_.exposure_value);
+            driver_->setGain(camera_.gain_mode, camera_.gain_value);
+        }
     }
 
-    camera_.orientation = camera.orientation;
-    camera_.exposure_mode = camera.exposure_mode;
-    camera_.exposure_value = camera.exposure_value;
-    camera_.gain_mode = camera.gain_mode;
-    camera_.gain_value = camera.gain_value;
+    // Trigger delayed sync if switching to auto mode
+    if (triggerAutoSync && driver_->isConnected()) {
+        std::thread([this]() {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            if (running_.load() && driver_->isConnected()) {
+                syncAutoValues();
+            }
+        }).detach();
+    }
 }
 
 void CameraThread::run() {
@@ -153,6 +180,22 @@ void CameraThread::run() {
              if (driver_->connect(connectionErrorLogged)) {
                  spdlog::info("Connected to camera {}", cameraId);
                  connectionErrorLogged = false;
+
+                 // Apply initial settings
+                 bool needsAutoSync = false;
+                 {
+                     std::lock_guard<std::mutex> lock(settingsMutex_);
+                     driver_->setExposure(camera_.exposure_mode, camera_.exposure_value);
+                     driver_->setGain(camera_.gain_mode, camera_.gain_value);
+                     needsAutoSync = (camera_.exposure_mode == ExposureMode::Auto ||
+                                     camera_.gain_mode == GainMode::Auto);
+                 }
+
+                 // Sync auto values after startup
+                 if (needsAutoSync) {
+                     std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                     syncAutoValues();
+                 }
              } else {
                  if (!connectionErrorLogged) {
                      // First failure is already logged by driver (silent=false)
@@ -276,6 +319,59 @@ void CameraThread::applyOrientation(cv::Mat& frame) {
         default:
             break;
     }
+}
+
+BaseDriver::Range CameraThread::getExposureRange() const {
+    return driver_->getExposureRange();
+}
+
+BaseDriver::Range CameraThread::getGainRange() const {
+    return driver_->getGainRange();
+}
+
+int CameraThread::getExposure() const {
+    return driver_->getExposure();
+}
+
+int CameraThread::getGain() const {
+    return driver_->getGain();
+}
+
+void CameraThread::syncAutoValues() {
+    int cameraId;
+    ExposureMode expMode;
+    GainMode gainMode;
+
+    {
+        std::lock_guard<std::mutex> lock(settingsMutex_);
+        cameraId = camera_.id;
+        expMode = camera_.exposure_mode;
+        gainMode = camera_.gain_mode;
+    }
+
+    if (expMode != ExposureMode::Auto && gainMode != GainMode::Auto) {
+        return; // Nothing to sync
+    }
+
+    int actualExposure = driver_->getExposure();
+    int actualGain = driver_->getGain();
+
+    // Update local cache
+    {
+        std::lock_guard<std::mutex> lock(settingsMutex_);
+        if (expMode == ExposureMode::Auto) {
+            camera_.exposure_value = actualExposure;
+        }
+        if (gainMode == GainMode::Auto) {
+            camera_.gain_value = actualGain;
+        }
+    }
+
+    // Update database
+    CameraService::instance().updateCameraAutoValues(cameraId, actualExposure, actualGain);
+
+    spdlog::debug("Synced auto values for camera {}: exposure={}, gain={}",
+                  cameraId, actualExposure, actualGain);
 }
 
 // ============== VisionThread ==============
@@ -676,6 +772,42 @@ void ThreadManager::updateCameraSettings(const Camera& camera) {
         it->second->updateSettings(camera);
         spdlog::info("Updated settings for running camera {}", camera.id);
     }
+}
+
+BaseDriver::Range ThreadManager::getCameraExposureRange(int cameraId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = cameraThreads_.find(cameraId);
+    if (it != cameraThreads_.end() && it->second->isRunning()) {
+        return it->second->getExposureRange();
+    }
+    return {0, 10000, 1, 500}; // Default fallback
+}
+
+BaseDriver::Range ThreadManager::getCameraGainRange(int cameraId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = cameraThreads_.find(cameraId);
+    if (it != cameraThreads_.end() && it->second->isRunning()) {
+        return it->second->getGainRange();
+    }
+    return {0, 100, 1, 0}; // Default fallback
+}
+
+int ThreadManager::getCameraExposure(int cameraId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = cameraThreads_.find(cameraId);
+    if (it != cameraThreads_.end() && it->second->isRunning()) {
+        return it->second->getExposure();
+    }
+    return 0;
+}
+
+int ThreadManager::getCameraGain(int cameraId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = cameraThreads_.find(cameraId);
+    if (it != cameraThreads_.end() && it->second->isRunning()) {
+        return it->second->getGain();
+    }
+    return 0;
 }
 
 void ThreadManager::updateFieldLayout(const std::string& layoutName) {

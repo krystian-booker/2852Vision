@@ -25,6 +25,7 @@
 #include "routes/networktables.hpp"
 
 #include <opencv2/core/utils/logger.hpp>
+#include <filesystem>
 
 using namespace drogon;
 
@@ -95,7 +96,12 @@ int main(int argc, char** argv) {
     // Start server
     spdlog::info("Starting server on {}:{}", config.server.host, config.server.port);
 
-    app().setLogLevel(trantor::Logger::kWarn)
+    // Create upload directory with absolute path to avoid Drogon path issues
+    auto uploadPath = std::filesystem::absolute("uploads");
+    std::filesystem::create_directories(uploadPath);
+
+    app().setUploadPath(uploadPath.string())
+        .setLogLevel(trantor::Logger::kWarn)
         .addListener(config.server.host, config.server.port)
         .setThreadNum(config.server.threads)
         .run();

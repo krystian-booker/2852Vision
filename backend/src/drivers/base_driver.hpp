@@ -45,8 +45,22 @@ public:
     // Get current exposure value
     virtual int getExposure() const { return 0; }
 
+    // Range metadata
+    struct Range {
+        int min;
+        int max;
+        int step;
+        int default_value;
+    };
+
     // Get current gain value
     virtual int getGain() const { return 0; }
+    
+    // Get exposure range
+    virtual Range getExposureRange() const { return {0, 10000, 1, 500}; }
+
+    // Get gain range
+    virtual Range getGainRange() const { return {0, 100, 1, 0}; }
 
     // Factory method to create appropriate driver
     static std::unique_ptr<BaseDriver> create(const Camera& camera);
