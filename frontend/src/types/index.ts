@@ -25,12 +25,14 @@ export interface Pipeline {
   id: number
   camera_id: number
   name: string
-  pipeline_type: string // 'AprilTag' | 'Coloured Shape' | 'Object Detection (ML)'
+  pipeline_type: string // 'AprilTag' | 'Object Detection (ML)'
   config: string // JSON string of PipelineConfig
 }
 
-export interface PipelineConfig {
-  // AprilTag config
+/**
+ * AprilTag pipeline configuration.
+ */
+export interface AprilTagConfig {
   family?: string
   tag_size_m?: number
   threads?: number
@@ -48,21 +50,12 @@ export interface PipelineConfig {
   use_prev_guess?: boolean
   publish_field_pose?: boolean
   output_quaternion?: boolean
+}
 
-  // ColoredShape config
-  hue_min?: number
-  hue_max?: number
-  saturation_min?: number
-  saturation_max?: number
-  value_min?: number
-  value_max?: number
-  min_area?: number
-  max_area?: number
-  min_aspect_ratio?: number
-  max_aspect_ratio?: number
-  min_fullness?: number
-
-  // ML config
+/**
+ * Machine Learning pipeline configuration.
+ */
+export interface MLConfig {
   model_type?: string
   model_filename?: string
   labels_filename?: string
@@ -74,8 +67,13 @@ export interface PipelineConfig {
   tflite_delegate?: string | null
   max_detections?: number
   img_size?: number
-  [key: string]: any // Allow additional properties
 }
+
+/**
+ * Combined pipeline configuration type.
+ * Supports both AprilTag and ML configurations.
+ */
+export type PipelineConfig = AprilTagConfig & MLConfig
 
 export interface CameraStatus {
   connected: boolean
@@ -84,10 +82,16 @@ export interface CameraStatus {
 
 export interface CameraControls {
   orientation: number
-  exposure_mode: string
+  exposure_mode: 'auto' | 'manual'
   exposure_value: number
-  gain_mode: string
+  exposure_min?: number
+  exposure_max?: number
+  exposure_step?: number
+  gain_mode: 'auto' | 'manual'
   gain_value: number
+  gain_min?: number
+  gain_max?: number
+  gain_step?: number
 }
 
 export interface DeviceInfo {
@@ -155,4 +159,66 @@ export interface AprilTagField {
   name: string
   is_default: boolean
   field_json: string
+}
+
+// Detection Result Types
+
+export interface Translation3D {
+  x: number
+  y: number
+  z: number
+}
+
+export interface Quaternion {
+  W: number
+  X: number
+  Y: number
+  Z: number
+}
+
+export interface EulerAngles {
+  pitch: number
+  roll: number
+  yaw: number
+}
+
+export interface Pose3D {
+  translation: Translation3D
+  rotation: {
+    quaternion: Quaternion
+  }
+}
+
+export interface AprilTagDetection {
+  id: number
+  pose_relative: Pose3D | null
+  euler?: EulerAngles
+  decision_margin?: number
+  hamming?: number
+}
+
+export interface MLDetection {
+  id?: number
+  label: string
+  confidence: number
+  bbox?: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+}
+
+export interface RobotPose {
+  translation: Translation3D
+  rotation: {
+    quaternion: Quaternion
+  }
+}
+
+export interface PipelineResults {
+  apriltag: AprilTagDetection[]
+  ml: MLDetection[]
+  robotPose: RobotPose | null
+  processingTimeMs: number | null
 }

@@ -5,10 +5,21 @@ import { Alert, AlertTitle, AlertDescription } from '../ui/alert';
 import { Save, RotateCcw, CheckCircle, AlertTriangle } from 'lucide-react';
 import type { BoardConfig } from './BoardConfig';
 
+interface Corner {
+    x: number;
+    y: number;
+}
+
 interface Detection {
     id: string;
-    corners: any[];
+    corners: Corner[][];
     imageSize: [number, number];
+}
+
+interface CalibrationResult {
+    camera_matrix: number[][];
+    dist_coeffs: number[];
+    reprojection_error: number;
 }
 
 interface ResultStepProps {
@@ -27,7 +38,7 @@ export function ResultStep({
     const [isCalibrating, setIsCalibrating] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [result, setResult] = useState<any>(null);
+    const [result, setResult] = useState<CalibrationResult | null>(null);
     const [saveSuccess, setSaveSuccess] = useState(false);
 
     useEffect(() => {
@@ -53,8 +64,8 @@ export function ResultStep({
                 if (!response.ok) throw new Error(data.error || "Calibration failed");
 
                 setResult(data);
-            } catch (e: any) {
-                setError(e.message);
+            } catch (e: unknown) {
+                setError(e instanceof Error ? e.message : 'Calibration failed');
             } finally {
                 setIsCalibrating(false);
             }
@@ -82,8 +93,8 @@ export function ResultStep({
             if (!response.ok) throw new Error("Failed to save calibration");
 
             setSaveSuccess(true);
-        } catch (e: any) {
-            setError(e.message);
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : 'Failed to save calibration');
         } finally {
             setIsSaving(false);
         }
@@ -99,13 +110,13 @@ export function ResultStep({
         );
     }
 
-    if (error) {
+    if (error || !result) {
         return (
             <div className="space-y-6">
                 <Alert variant="destructive">
                     <AlertTriangle className="h-4 w-4" />
                     <AlertTitle>Calibration Failed</AlertTitle>
-                    <AlertDescription>{error}</AlertDescription>
+                    <AlertDescription>{error ?? 'No calibration result available'}</AlertDescription>
                 </Alert>
                 <Button onClick={onRestart} variant="outline">
                     <RotateCcw className="w-4 h-4 mr-2" />

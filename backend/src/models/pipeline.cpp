@@ -34,41 +34,6 @@ AprilTagConfig AprilTagConfig::fromJson(const nlohmann::json& j) {
     return cfg;
 }
 
-// ColouredShapeConfig
-nlohmann::json ColouredShapeConfig::toJson() const {
-    return {
-        {"hue_min", hue_min},
-        {"hue_max", hue_max},
-        {"saturation_min", saturation_min},
-        {"saturation_max", saturation_max},
-        {"value_min", value_min},
-        {"value_max", value_max},
-        {"area_min", area_min},
-        {"area_max", area_max},
-        {"aspect_ratio_min", aspect_ratio_min},
-        {"aspect_ratio_max", aspect_ratio_max},
-        {"fullness_min", fullness_min},
-        {"fullness_max", fullness_max}
-    };
-}
-
-ColouredShapeConfig ColouredShapeConfig::fromJson(const nlohmann::json& j) {
-    ColouredShapeConfig cfg;
-    cfg.hue_min = j.value("hue_min", 0);
-    cfg.hue_max = j.value("hue_max", 180);
-    cfg.saturation_min = j.value("saturation_min", 100);
-    cfg.saturation_max = j.value("saturation_max", 255);
-    cfg.value_min = j.value("value_min", 100);
-    cfg.value_max = j.value("value_max", 255);
-    cfg.area_min = j.value("area_min", 100);
-    cfg.area_max = j.value("area_max", 100000);
-    cfg.aspect_ratio_min = j.value("aspect_ratio_min", 0.0);
-    cfg.aspect_ratio_max = j.value("aspect_ratio_max", 10.0);
-    cfg.fullness_min = j.value("fullness_min", 0.0);
-    cfg.fullness_max = j.value("fullness_max", 1.0);
-    return cfg;
-}
-
 // ObjectDetectionMLConfig
 nlohmann::json ObjectDetectionMLConfig::toJson() const {
     return {
@@ -128,7 +93,6 @@ Pipeline Pipeline::fromRow(const SQLite::Statement& query) {
 
     std::string typeStr = query.getColumn("pipeline_type").getString();
     if (typeStr == "AprilTag") p.pipeline_type = PipelineType::AprilTag;
-    else if (typeStr == "Coloured Shape") p.pipeline_type = PipelineType::ColouredShape;
     else if (typeStr == "Object Detection (ML)") p.pipeline_type = PipelineType::ObjectDetectionML;
 
     if (!query.getColumn("config").isNull()) {
@@ -156,10 +120,6 @@ void Pipeline::setConfigJson(const nlohmann::json& configJson) {
 
 AprilTagConfig Pipeline::getAprilTagConfig() const {
     return AprilTagConfig::fromJson(getConfigJson());
-}
-
-ColouredShapeConfig Pipeline::getColouredShapeConfig() const {
-    return ColouredShapeConfig::fromJson(getConfigJson());
 }
 
 ObjectDetectionMLConfig Pipeline::getObjectDetectionMLConfig() const {

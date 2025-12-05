@@ -12,10 +12,6 @@ std::unique_ptr<BasePipeline> BasePipeline::create(const Pipeline& pipeline) {
             return std::make_unique<AprilTagPipeline>(config);
         }
 
-        case PipelineType::ColouredShape:
-            spdlog::warn("Coloured Shape pipeline not yet implemented");
-            return nullptr;
-
         case PipelineType::ObjectDetectionML: {
             auto config = pipeline.getObjectDetectionMLConfig();
             return std::make_unique<ObjectDetectionMLPipeline>(config);

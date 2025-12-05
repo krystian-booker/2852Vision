@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import type { Camera, Pipeline } from '@/types'
 
+/**
+ * Application state interface.
+ */
 interface AppState {
   // Cameras
   cameras: Camera[]
@@ -88,3 +91,28 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
 }))
+
+// Typed selectors for better DX and memoization
+export const selectCameras = (state: AppState) => state.cameras
+export const selectPipelines = (state: AppState) => state.pipelines
+export const selectSidebarOpen = (state: AppState) => state.sidebarOpen
+export const selectSelectedCameraId = (state: AppState) => state.selectedCameraId
+export const selectSelectedPipelineId = (state: AppState) => state.selectedPipelineId
+
+/**
+ * Select the currently selected camera.
+ */
+export const selectSelectedCamera = (state: AppState) =>
+  state.cameras.find((c) => c.id === state.selectedCameraId) ?? null
+
+/**
+ * Select the currently selected pipeline.
+ */
+export const selectSelectedPipeline = (state: AppState) =>
+  state.pipelines.find((p) => p.id === state.selectedPipelineId) ?? null
+
+/**
+ * Create a selector for pipelines belonging to a specific camera.
+ */
+export const createSelectPipelinesForCamera = (cameraId: number) => (state: AppState) =>
+  state.pipelines.filter((p) => p.camera_id === cameraId)

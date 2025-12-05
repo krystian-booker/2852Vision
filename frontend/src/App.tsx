@@ -10,6 +10,7 @@ const Cameras = lazy(() => import('./pages/Cameras'))
 const Settings = lazy(() => import('./pages/Settings'))
 const Monitoring = lazy(() => import('./pages/Monitoring'))
 const Calibration = lazy(() => import('./pages/Calibration'))
+const NotFound = lazy(() => import('./pages/NotFound'))
 
 function App() {
   return (
@@ -33,8 +34,6 @@ function App() {
             }
           />
           <Route
-          />
-          <Route
             path="settings"
             element={
               <Suspense fallback={<LoadingSpinner />}>
@@ -55,6 +54,14 @@ function App() {
             element={
               <Suspense fallback={<LoadingSpinner />}>
                 <Calibration />
+              </Suspense>
+            }
+          />
+          <Route
+            path="*"
+            element={
+              <Suspense fallback={<LoadingSpinner />}>
+                <NotFound />
               </Suspense>
             }
           />

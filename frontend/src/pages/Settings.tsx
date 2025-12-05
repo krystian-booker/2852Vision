@@ -486,7 +486,9 @@ export default function Settings() {
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                          <button type="button" className="inline-flex">
+                            <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                          </button>
                         </TooltipTrigger>
                         <TooltipContent>
                           <p>This setting can only be modified through your operating system's network settings</p>
@@ -520,7 +522,9 @@ export default function Settings() {
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                          <button type="button" className="inline-flex">
+                            <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                          </button>
                         </TooltipTrigger>
                         <TooltipContent>
                           <p>This setting can only be modified through your operating system's network settings</p>

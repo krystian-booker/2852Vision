@@ -65,7 +65,6 @@ Pipeline PipelineService::createPipeline(Pipeline& pipeline) {
     std::string typeStr;
     switch (pipeline.pipeline_type) {
         case PipelineType::AprilTag: typeStr = "AprilTag"; break;
-        case PipelineType::ColouredShape: typeStr = "Coloured Shape"; break;
         case PipelineType::ObjectDetectionML: typeStr = "Object Detection (ML)"; break;
     }
 
@@ -95,7 +94,6 @@ bool PipelineService::updatePipeline(const Pipeline& pipeline) {
     std::string typeStr;
     switch (pipeline.pipeline_type) {
         case PipelineType::AprilTag: typeStr = "AprilTag"; break;
-        case PipelineType::ColouredShape: typeStr = "Coloured Shape"; break;
         case PipelineType::ObjectDetectionML: typeStr = "Object Detection (ML)"; break;
     }
 
@@ -155,9 +153,6 @@ nlohmann::json PipelineService::getDefaultConfig(PipelineType type) {
     switch (type) {
         case PipelineType::AprilTag:
             return AprilTagConfig().toJson();
-
-        case PipelineType::ColouredShape:
-            return ColouredShapeConfig().toJson();
 
         case PipelineType::ObjectDetectionML:
             return ObjectDetectionMLConfig().toJson();

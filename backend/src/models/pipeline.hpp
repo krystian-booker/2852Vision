@@ -13,13 +13,11 @@ namespace vision {
 
 enum class PipelineType {
     AprilTag,
-    ColouredShape,
     ObjectDetectionML
 };
 
 NLOHMANN_JSON_SERIALIZE_ENUM(PipelineType, {
     {PipelineType::AprilTag, "AprilTag"},
-    {PipelineType::ColouredShape, "Coloured Shape"},
     {PipelineType::ObjectDetectionML, "Object Detection (ML)"}
 })
 
@@ -38,25 +36,6 @@ struct AprilTagConfig {
 
     nlohmann::json toJson() const;
     static AprilTagConfig fromJson(const nlohmann::json& j);
-};
-
-// Coloured shape configuration
-struct ColouredShapeConfig {
-    int hue_min = 0;
-    int hue_max = 180;
-    int saturation_min = 100;
-    int saturation_max = 255;
-    int value_min = 100;
-    int value_max = 255;
-    int area_min = 100;
-    int area_max = 100000;
-    double aspect_ratio_min = 0.0;
-    double aspect_ratio_max = 10.0;
-    double fullness_min = 0.0;
-    double fullness_max = 1.0;
-
-    nlohmann::json toJson() const;
-    static ColouredShapeConfig fromJson(const nlohmann::json& j);
 };
 
 // ML object detection configuration
@@ -95,7 +74,6 @@ struct Pipeline {
 
     // Get typed config
     AprilTagConfig getAprilTagConfig() const;
-    ColouredShapeConfig getColouredShapeConfig() const;
     ObjectDetectionMLConfig getObjectDetectionMLConfig() const;
 };
 

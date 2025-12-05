@@ -9,11 +9,17 @@ import type { BoardConfig } from './BoardConfig';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 import { MJPEGStream } from '../shared/MJPEGStream';
 
+interface Corner {
+    id: number;
+    x: number;
+    y: number;
+}
+
 interface Detection {
     id: string;
     image: string; // base64
     debugImage?: string; // base64 with corners drawn
-    corners: any[]; // {id, x, y}
+    corners: Corner[][];
     imageSize: [number, number];
 }
 
@@ -88,8 +94,8 @@ export function CaptureStep({
                 setLastError(result.error || "No board detected. Please adjust the board or camera.");
             }
 
-        } catch (e: any) {
-            setLastError(e.message);
+        } catch (e: unknown) {
+            setLastError(e instanceof Error ? e.message : 'Detection failed');
         } finally {
             setIsCapturing(false);
         }
