@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { api } from '../../lib/api'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -21,6 +22,22 @@ const navigation = [
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const location = useLocation()
+  const [ntConnected, setNtConnected] = useState(false)
+
+  useEffect(() => {
+    const checkConnection = async () => {
+      try {
+        const status: any = await api.get('/api/networktables/status')
+        setNtConnected(status.connected)
+      } catch (e) {
+        setNtConnected(false)
+      }
+    }
+
+    checkConnection()
+    const interval = setInterval(checkConnection, 2000)
+    return () => clearInterval(interval)
+  }, [])
 
   return (
     <div className="min-h-screen">
@@ -49,6 +66,12 @@ export default function Layout() {
               <div>
                 <h1 className="text-xl font-bold text-primary text-technical-wide">2852Vision</h1>
                 <p className="text-xs text-muted uppercase tracking-wide">Vision Control</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <div className={`w-2 h-2 rounded-full ${ntConnected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]'}`} />
+                  <span className={`text-[10px] uppercase tracking-wide font-medium ${ntConnected ? 'text-green-500' : 'text-red-500'}`}>
+                    {ntConnected ? 'Robot Connected' : 'Robot Not Connected'}
+                  </span>
+                </div>
               </div>
             </div>
             <button
@@ -70,8 +93,8 @@ export default function Layout() {
                   to={item.href}
                   onClick={() => setSidebarOpen(false)}
                   className={`flex items-center gap-3 px-4 py-2.5 rounded-[var(--radius-sm)] text-sm font-medium uppercase tracking-wide transition-all ${isActive
-                      ? 'bg-[var(--color-surface-alt)] text-[var(--color-teal)] shadow-[0_0_12px_rgba(0,194,168,0.15)]'
-                      : 'text-muted hover:bg-[var(--color-surface-alt)] hover:text-text'
+                    ? 'bg-[var(--color-surface-alt)] text-[var(--color-teal)] shadow-[0_0_12px_rgba(0,194,168,0.15)]'
+                    : 'text-muted hover:bg-[var(--color-surface-alt)] hover:text-text'
                     }`}
                 >
                   <Icon size={20} />

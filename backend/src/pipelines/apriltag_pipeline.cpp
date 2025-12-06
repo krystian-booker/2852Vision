@@ -259,6 +259,7 @@ PipelineResult AprilTagPipeline::process(const cv::Mat& frame,
         MultiTagResult globalPose = solveMultiTagPose(validDetectionsForSolver, frame.size());
         if (globalPose.valid) {
             result.robotPose = globalPose.robotPose;
+            result.tagsUsed = globalPose.tagsUsed;
         }
     }
 

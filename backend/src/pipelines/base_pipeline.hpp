@@ -16,6 +16,7 @@ struct PipelineResult {
     cv::Mat annotatedFrame;     // Frame with overlays drawn
     double processingTimeMs = 0;
     std::optional<Pose3d> robotPose; // Global robot pose (if available)
+    int tagsUsed = 0;           // Number of tags used for pose estimation
 };
 
 class BasePipeline {

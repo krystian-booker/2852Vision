@@ -3,6 +3,7 @@
 
 #include "routes/settings.hpp"
 #include "services/settings_service.hpp"
+#include "services/networktables_service.hpp"
 #include "drivers/spinnaker_driver.hpp"
 #include "utils/network_utils.hpp"
 #include <spdlog/spdlog.h>
@@ -82,6 +83,13 @@ void SettingsController::registerRoutes(drogon::HttpAppFramework& app) {
 
                 // Save settings to database
                 settingsService.setGlobalSettings(settings);
+
+                // Reconnect NetworkTables if team number changed
+                if (settings.team_number != currentSettings.team_number && settings.team_number > 0) {
+                    spdlog::info("Team number changed from {} to {}, reconnecting NetworkTables",
+                        currentSettings.team_number, settings.team_number);
+                    NetworkTablesService::instance().connect(settings.team_number);
+                }
 
                 // Apply network configuration on Linux only
                 if (isLinux) {

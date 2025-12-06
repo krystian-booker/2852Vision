@@ -3,6 +3,7 @@
 #include "services/pipeline_service.hpp"
 #include "services/streamer_service.hpp"
 #include "services/settings_service.hpp"
+#include "services/networktables_service.hpp"
 #include "vision/field_layout.hpp"
 #include <spdlog/spdlog.h>
 
@@ -493,6 +494,16 @@ void VisionThread::run() {
             } else {
                 latestResults_["robot_pose"] = nullptr;
             }
+        }
+
+        // Publish to NetworkTables (methods check connection internally)
+        auto& nt = NetworkTablesService::instance();
+        nt.publishDetections(pipeline_.camera_id, result.detections);
+
+        if (result.robotPose.has_value()) {
+            double timestamp = std::chrono::duration<double>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            nt.publishRobotPose(result.robotPose.value(), timestamp, result.tagsUsed);
         }
     }
 }

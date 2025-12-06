@@ -52,6 +52,13 @@ int main(int argc, char** argv) {
     // Initialize MJPEG Streamer
     vision::StreamerService::instance().initialize(5805);
 
+    // Initialize NetworkTables if team number is set
+    auto globalSettings = vision::SettingsService::instance().getGlobalSettings();
+    if (globalSettings.team_number > 0) {
+        spdlog::info("Startup: connecting to NetworkTables for team {}", globalSettings.team_number);
+        vision::NetworkTablesService::instance().connect(globalSettings.team_number);
+    }
+
     // Start all configured cameras and pipelines at startup so acquisition/processing is always running
     {
         auto cameras = vision::CameraService::instance().getAllCameras();
