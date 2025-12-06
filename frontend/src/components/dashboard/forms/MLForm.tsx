@@ -4,6 +4,14 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { useMLAvailability } from '@/lib/queries'
 
 interface MLFormProps {
   config: PipelineConfig
@@ -22,11 +30,43 @@ export const MLForm = memo(function MLForm({
   onFileUpload,
   onFileDelete,
 }: MLFormProps) {
+  const { data: mlAvailability } = useMLAvailability()
+
+  // Extract available ONNX providers from the ML availability data
+  const onnxProviders = (mlAvailability?.onnx as { providers?: string[] })?.providers ?? []
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="space-y-4">
           <h3 className="text-lg font-semibold">Object Detection (ML)</h3>
+
+          <div className="space-y-2">
+            <Label>Accelerator</Label>
+            <Select
+              value={(config.accelerator as string) || 'none'}
+              onValueChange={(value) => onChange({ accelerator: value })}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select accelerator" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">CPU (Default)</SelectItem>
+                {onnxProviders.includes('CUDAExecutionProvider') && (
+                  <SelectItem value="cuda">NVIDIA CUDA</SelectItem>
+                )}
+                {onnxProviders.includes('TensorrtExecutionProvider') && (
+                  <SelectItem value="tensorrt">NVIDIA TensorRT</SelectItem>
+                )}
+                {onnxProviders.includes('CoreMLExecutionProvider') && (
+                  <SelectItem value="coreml">Apple Neural Engine</SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Available providers: {onnxProviders.length > 0 ? onnxProviders.join(', ') : 'Loading...'}
+            </p>
+          </div>
 
           <div className="space-y-2">
             <Label>ML Model File</Label>
@@ -125,13 +165,17 @@ export const MLForm = memo(function MLForm({
               <TableHeader>
                 <TableRow>
                   <TableHead>Label</TableHead>
-                  <TableHead>Confidence</TableHead>
+                  <TableHead>Conf</TableHead>
+                  <TableHead>TX (°)</TableHead>
+                  <TableHead>TY (°)</TableHead>
+                  <TableHead>Dist (m)</TableHead>
+                  <TableHead>Area (%)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {results.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={2} className="text-center text-muted-foreground">
+                    <TableCell colSpan={6} className="text-center text-muted-foreground">
                       No detections
                     </TableCell>
                   </TableRow>
@@ -139,7 +183,11 @@ export const MLForm = memo(function MLForm({
                   results.map((det, index) => (
                     <TableRow key={det.id ?? `${det.label}-${index}`}>
                       <TableCell>{det.label || 'unknown'}</TableCell>
-                      <TableCell>{det.confidence?.toFixed(3) ?? 'N/A'}</TableCell>
+                      <TableCell>{det.confidence?.toFixed(2) ?? '-'}</TableCell>
+                      <TableCell>{det.tx?.toFixed(1) ?? '-'}</TableCell>
+                      <TableCell>{det.ty?.toFixed(1) ?? '-'}</TableCell>
+                      <TableCell>{det.td?.toFixed(2) ?? '-'}</TableCell>
+                      <TableCell>{det.ta?.toFixed(1) ?? '-'}</TableCell>
                     </TableRow>
                   ))
                 )}

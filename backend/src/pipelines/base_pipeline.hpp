@@ -60,6 +60,11 @@ public:
     // Factory method
     static std::unique_ptr<BasePipeline> create(const Pipeline& pipeline);
 
+    // Factory method with camera FOV (for ML pipelines that need targeting data)
+    static std::unique_ptr<BasePipeline> create(const Pipeline& pipeline,
+                                                  double horizontalFov,
+                                                  double verticalFov);
+
 protected:
     cv::Mat cameraMatrix_;
     cv::Mat distCoeffs_;

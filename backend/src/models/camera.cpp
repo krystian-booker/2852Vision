@@ -21,6 +21,8 @@ nlohmann::json Camera::toJson() const {
     j["resolution_json"] = resolution_json.value_or("");
     j["framerate"] = framerate.has_value() ? nlohmann::json(framerate.value()) : nlohmann::json(nullptr);
     j["depth_enabled"] = depth_enabled;
+    j["horizontal_fov"] = horizontal_fov.has_value() ? nlohmann::json(horizontal_fov.value()) : nlohmann::json(nullptr);
+    j["vertical_fov"] = vertical_fov.has_value() ? nlohmann::json(vertical_fov.value()) : nlohmann::json(nullptr);
     return j;
 }
 
@@ -55,6 +57,12 @@ Camera Camera::fromJson(const nlohmann::json& j) {
         cam.framerate = j["framerate"].get<int>();
     }
     cam.depth_enabled = j.value("depth_enabled", false);
+    if (j.contains("horizontal_fov") && !j["horizontal_fov"].is_null()) {
+        cam.horizontal_fov = j["horizontal_fov"].get<double>();
+    }
+    if (j.contains("vertical_fov") && !j["vertical_fov"].is_null()) {
+        cam.vertical_fov = j["vertical_fov"].get<double>();
+    }
 
     return cam;
 }
@@ -95,6 +103,12 @@ Camera Camera::fromRow(const SQLite::Statement& query) {
         cam.framerate = query.getColumn("framerate").getInt();
     }
     cam.depth_enabled = query.getColumn("depth_enabled").getInt() != 0;
+    if (!query.getColumn("horizontal_fov").isNull()) {
+        cam.horizontal_fov = query.getColumn("horizontal_fov").getDouble();
+    }
+    if (!query.getColumn("vertical_fov").isNull()) {
+        cam.vertical_fov = query.getColumn("vertical_fov").getDouble();
+    }
 
     return cam;
 }
@@ -135,6 +149,12 @@ void Camera::bindToStatement(SQLite::Statement& stmt) const {
     else stmt.bind(":framerate");
 
     stmt.bind(":depth_enabled", depth_enabled ? 1 : 0);
+
+    if (horizontal_fov) stmt.bind(":horizontal_fov", *horizontal_fov);
+    else stmt.bind(":horizontal_fov");
+
+    if (vertical_fov) stmt.bind(":vertical_fov", *vertical_fov);
+    else stmt.bind(":vertical_fov");
 }
 
 nlohmann::json DeviceInfo::toJson() const {

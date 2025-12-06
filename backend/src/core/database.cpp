@@ -75,7 +75,9 @@ void Database::createSchema() {
             device_info_json TEXT,
             resolution_json TEXT,
             framerate INTEGER,
-            depth_enabled INTEGER DEFAULT 0
+            depth_enabled INTEGER DEFAULT 0,
+            horizontal_fov REAL,
+            vertical_fov REAL
         );
     )");
 

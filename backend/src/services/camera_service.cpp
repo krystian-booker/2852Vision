@@ -71,12 +71,14 @@ Camera CameraService::createCamera(Camera& camera) {
                 name, camera_type, identifier, orientation,
                 exposure_value, gain_value, exposure_mode, gain_mode,
                 camera_matrix_json, dist_coeffs_json, reprojection_error,
-                device_info_json, resolution_json, framerate, depth_enabled
+                device_info_json, resolution_json, framerate, depth_enabled,
+                horizontal_fov, vertical_fov
             ) VALUES (
                 :name, :camera_type, :identifier, :orientation,
                 :exposure_value, :gain_value, :exposure_mode, :gain_mode,
                 :camera_matrix_json, :dist_coeffs_json, :reprojection_error,
-                :device_info_json, :resolution_json, :framerate, :depth_enabled
+                :device_info_json, :resolution_json, :framerate, :depth_enabled,
+                :horizontal_fov, :vertical_fov
             )
         )");
 
@@ -101,7 +103,8 @@ bool CameraService::updateCamera(const Camera& camera) {
                 gain_mode = :gain_mode, camera_matrix_json = :camera_matrix_json,
                 dist_coeffs_json = :dist_coeffs_json, reprojection_error = :reprojection_error,
                 device_info_json = :device_info_json, resolution_json = :resolution_json,
-                framerate = :framerate, depth_enabled = :depth_enabled
+                framerate = :framerate, depth_enabled = :depth_enabled,
+                horizontal_fov = :horizontal_fov, vertical_fov = :vertical_fov
             WHERE id = :id
         )");
 

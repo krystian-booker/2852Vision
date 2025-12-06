@@ -19,6 +19,8 @@ export interface Camera {
   framerate: number | null
   depth_enabled: boolean
   device_info_json: string | null
+  horizontal_fov: number | null    // degrees
+  vertical_fov: number | null      // degrees
 }
 
 export interface Pipeline {
@@ -201,12 +203,19 @@ export interface MLDetection {
   id?: number
   label: string
   confidence: number
+  box?: [number, number, number, number]  // [x1, y1, x2, y2]
   bbox?: {
     x: number
     y: number
     width: number
     height: number
   }
+  // Targeting data
+  tx?: number       // Horizontal offset from crosshair in degrees
+  ty?: number       // Vertical offset from crosshair in degrees
+  ta?: number       // Target area as percentage of image (0-100)
+  tv?: number       // Valid target (1 = valid, 0 = invalid)
+  td?: number       // Distance to target in meters (from depth camera)
 }
 
 export interface RobotPose {

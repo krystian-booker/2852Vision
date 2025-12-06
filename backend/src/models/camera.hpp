@@ -67,6 +67,8 @@ struct Camera {
     std::optional<std::string> resolution_json;
     std::optional<int> framerate;
     bool depth_enabled = false;
+    std::optional<double> horizontal_fov;  // degrees
+    std::optional<double> vertical_fov;    // degrees
 
     // JSON serialization
     nlohmann::json toJson() const;

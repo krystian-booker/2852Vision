@@ -5,15 +5,24 @@
 #include <chrono>
 #include <algorithm>
 #include <numeric>
+#include <cmath>
 
 namespace vision {
 
 nlohmann::json Detection::toJson() const {
-    return nlohmann::json{
+    nlohmann::json j = {
         {"label", label},
         {"confidence", confidence},
-        {"box", {x1, y1, x2, y2}}
+        {"box", {x1, y1, x2, y2}},
+        {"tx", tx},
+        {"ty", ty},
+        {"ta", ta},
+        {"tv", tv}
     };
+    if (td.has_value()) {
+        j["td"] = td.value();
+    }
+    return j;
 }
 
 // ================== OnnxYoloBackend ==================
@@ -53,6 +62,13 @@ OnnxYoloBackend::OnnxYoloBackend(
         OrtTensorRTProviderOptions trtOptions;
         sessionOptions.AppendExecutionProvider_TensorRT(trtOptions);
     }
+#ifdef __APPLE__
+    else if (provider == "CoreMLExecutionProvider") {
+        // CoreML execution provider for Apple Neural Engine
+        // Uses Apple's ML framework for accelerated inference on M-series chips
+        sessionOptions.AppendExecutionProvider("CoreML", {});
+    }
+#endif
     // CPUExecutionProvider is always available as fallback
 
     // Create session
@@ -323,11 +339,77 @@ std::vector<Detection> OnnxYoloBackend::predict(const cv::Mat& frame) {
 
 // ================== ObjectDetectionMLPipeline ==================
 
-ObjectDetectionMLPipeline::ObjectDetectionMLPipeline(const ObjectDetectionMLConfig& config)
+ObjectDetectionMLPipeline::ObjectDetectionMLPipeline(const ObjectDetectionMLConfig& config,
+                                                       double horizontalFov,
+                                                       double verticalFov)
     : config_(config)
+    , horizontalFov_(horizontalFov)
+    , verticalFov_(verticalFov)
 {
     loadLabels();
     createBackend();
+}
+
+void ObjectDetectionMLPipeline::setFov(double horizontalFov, double verticalFov) {
+    horizontalFov_ = horizontalFov;
+    verticalFov_ = verticalFov;
+}
+
+std::optional<float> ObjectDetectionMLPipeline::sampleDepthAtPoint(const cv::Mat& depth, int x, int y) {
+    if (depth.empty()) return std::nullopt;
+
+    // Bounds check
+    if (x < 0 || x >= depth.cols || y < 0 || y >= depth.rows) {
+        return std::nullopt;
+    }
+
+    // RealSense Z16 format: depth in millimeters as 16-bit unsigned
+    if (depth.type() == CV_16UC1) {
+        uint16_t depth_mm = depth.at<uint16_t>(y, x);
+        if (depth_mm == 0) return std::nullopt;  // Invalid reading
+        return depth_mm / 1000.0f;  // Convert to meters
+    }
+
+    // Float format (already in meters)
+    if (depth.type() == CV_32FC1) {
+        float depth_m = depth.at<float>(y, x);
+        if (depth_m <= 0.0f || std::isnan(depth_m) || std::isinf(depth_m)) {
+            return std::nullopt;
+        }
+        return depth_m;
+    }
+
+    return std::nullopt;
+}
+
+void ObjectDetectionMLPipeline::calculateTargetingData(Detection& det, int frameWidth, int frameHeight,
+                                                         const std::optional<cv::Mat>& depth) {
+    // Calculate center of bounding box
+    int cx = (det.x1 + det.x2) / 2;
+    int cy = (det.y1 + det.y2) / 2;
+
+    // Normalized offset from center (-1 to 1)
+    float nx = (cx - frameWidth / 2.0f) / (frameWidth / 2.0f);
+    float ny = (cy - frameHeight / 2.0f) / (frameHeight / 2.0f);
+
+    // Convert to degrees using FOV
+    // tx: positive = target is to the right of crosshair
+    // ty: positive = target is below crosshair
+    det.tx = nx * (static_cast<float>(horizontalFov_) / 2.0f);
+    det.ty = ny * (static_cast<float>(verticalFov_) / 2.0f);
+
+    // Target area as percentage of image
+    float boxArea = static_cast<float>((det.x2 - det.x1) * (det.y2 - det.y1));
+    float imageArea = static_cast<float>(frameWidth * frameHeight);
+    det.ta = (boxArea / imageArea) * 100.0f;
+
+    // Valid target flag (always 1 for detected objects)
+    det.tv = 1;
+
+    // Sample depth at center point if depth frame available
+    if (depth.has_value()) {
+        det.td = sampleDepthAtPoint(depth.value(), cx, cy);
+    }
 }
 
 void ObjectDetectionMLPipeline::loadLabels() {
@@ -418,6 +500,8 @@ void ObjectDetectionMLPipeline::createBackend() {
             provider = "CUDAExecutionProvider";
         } else if (config_.accelerator == "tensorrt") {
             provider = "TensorrtExecutionProvider";
+        } else if (config_.accelerator == "coreml") {
+            provider = "CoreMLExecutionProvider";
         }
 
         backend_ = std::make_unique<OnnxYoloBackend>(
@@ -483,6 +567,13 @@ PipelineResult ObjectDetectionMLPipeline::process(const cv::Mat& frame,
     try {
         // Run detection
         std::vector<Detection> detections = backend_->predict(frame);
+
+        // Calculate targeting data for each detection
+        int frameWidth = frame.cols;
+        int frameHeight = frame.rows;
+        for (auto& det : detections) {
+            calculateTargetingData(det, frameWidth, frameHeight, depth);
+        }
 
         // Convert to JSON
         nlohmann::json detectionsJson = nlohmann::json::array();

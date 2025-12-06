@@ -653,7 +653,12 @@ bool ThreadManager::startPipeline(const Pipeline& pipeline, int cameraId) {
         return false;
     }
 
-    auto processor = BasePipeline::create(pipeline);
+    // Get camera FOV for ML pipeline targeting calculations
+    const auto& cam = cameraIt->second->getCamera();
+    double horizontalFov = cam.horizontal_fov.value_or(60.0);  // Default 60 degrees
+    double verticalFov = cam.vertical_fov.value_or(45.0);      // Default 45 degrees
+
+    auto processor = BasePipeline::create(pipeline, horizontalFov, verticalFov);
     if (!processor) {
         spdlog::error("Failed to create processor for pipeline {}", pipeline.id);
         return false;
@@ -668,7 +673,6 @@ bool ThreadManager::startPipeline(const Pipeline& pipeline, int cameraId) {
 
     // Inject calibration if available
     try {
-        const auto& cam = cameraIt->second->getCamera();
         if (cam.camera_matrix_json.has_value() && !cam.camera_matrix_json->empty()) {
             auto matrixJson = nlohmann::json::parse(*cam.camera_matrix_json);
             

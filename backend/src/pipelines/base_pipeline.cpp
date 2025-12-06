@@ -6,6 +6,13 @@
 namespace vision {
 
 std::unique_ptr<BasePipeline> BasePipeline::create(const Pipeline& pipeline) {
+    // Use default FOV values
+    return create(pipeline, 60.0, 45.0);
+}
+
+std::unique_ptr<BasePipeline> BasePipeline::create(const Pipeline& pipeline,
+                                                     double horizontalFov,
+                                                     double verticalFov) {
     switch (pipeline.pipeline_type) {
         case PipelineType::AprilTag: {
             auto config = pipeline.getAprilTagConfig();
@@ -14,7 +21,7 @@ std::unique_ptr<BasePipeline> BasePipeline::create(const Pipeline& pipeline) {
 
         case PipelineType::ObjectDetectionML: {
             auto config = pipeline.getObjectDetectionMLConfig();
-            return std::make_unique<ObjectDetectionMLPipeline>(config);
+            return std::make_unique<ObjectDetectionMLPipeline>(config, horizontalFov, verticalFov);
         }
 
         default:
