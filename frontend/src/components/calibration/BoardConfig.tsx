@@ -13,6 +13,8 @@ export interface BoardConfig {
   squareLength: number; // meters
   markerLength: number; // meters
   dictionary: string;
+  pageWidth?: number;  // mm, for PDF generation (paper presets only)
+  pageHeight?: number; // mm, for PDF generation (paper presets only)
 }
 
 interface BoardConfigProps {
@@ -26,9 +28,9 @@ const METERS_TO_INCHES = 39.3701;
 const INCHES_TO_METERS = 0.0254;
 
 const PRESETS = {
-  A4: { squaresX: 5, squaresY: 7, squareLength: 0.034, markerLength: 0.025 },
-  A3: { squaresX: 7, squaresY: 10, squareLength: 0.034, markerLength: 0.025 },
-  Letter: { squaresX: 5, squaresY: 7, squareLength: 0.035, markerLength: 0.026 },
+  A4: { squaresX: 5, squaresY: 7, squareLength: 0.034, markerLength: 0.025, pageWidth: 210, pageHeight: 297 },
+  A3: { squaresX: 7, squaresY: 10, squareLength: 0.034, markerLength: 0.025, pageWidth: 297, pageHeight: 420 },
+  Letter: { squaresX: 5, squaresY: 7, squareLength: 0.035, markerLength: 0.026, pageWidth: 215.9, pageHeight: 279.4 },
   Screen: { squaresX: 5, squaresY: 7, squareLength: 0.040, markerLength: 0.030 },
 };
 
@@ -84,10 +86,39 @@ export function BoardConfigStep({ config, onChange, onNext, nextDisabled }: Boar
     }
   };
 
+  // Check if this is a paper preset (has page dimensions)
+  const getPaperDimensions = (): { pageWidth: number; pageHeight: number } | null => {
+    if (preset === 'A4') return { pageWidth: 210, pageHeight: 297 };
+    if (preset === 'A3') return { pageWidth: 297, pageHeight: 420 };
+    if (preset === 'Letter') return { pageWidth: 215.9, pageHeight: 279.4 };
+    return null;
+  };
+
+  const paperDimensions = getPaperDimensions();
+  const isPaperPreset = paperDimensions !== null;
+
   const handleDownload = () => {
     const link = document.createElement('a');
-    link.href = previewUrl;
-    link.download = `charuco_board_${preset}.png`;
+
+    if (isPaperPreset && paperDimensions) {
+      // Use PDF endpoint for paper presets
+      const params = new URLSearchParams({
+        squaresX: config.squaresX.toString(),
+        squaresY: config.squaresY.toString(),
+        squareLength: config.squareLength.toString(),
+        markerLength: config.markerLength.toString(),
+        dictionary: config.dictionary,
+        pageWidth: paperDimensions.pageWidth.toString(),
+        pageHeight: paperDimensions.pageHeight.toString(),
+      });
+      link.href = `/api/calibration/board/pdf?${params.toString()}`;
+      link.download = `charuco_board_${preset}.pdf`;
+    } else {
+      // Use PNG for screen preset or custom
+      link.href = previewUrl;
+      link.download = `charuco_board_${preset}.png`;
+    }
+
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -212,7 +243,7 @@ export function BoardConfigStep({ config, onChange, onNext, nextDisabled }: Boar
           <div className="pt-4 flex gap-2">
             <Button variant="outline" onClick={handleDownload} className="flex-1">
               <Download className="w-4 h-4 mr-2" />
-              Download Board
+              {isPaperPreset ? 'Download PDF' : 'Download PNG'}
             </Button>
             <Button onClick={onNext} disabled={nextDisabled} className="flex-1">
               Next Step

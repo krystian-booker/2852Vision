@@ -14,6 +14,13 @@ public:
                                  float markerLength, int imageSquareSizePixels = 100,
                                  const std::string& dictionary = "DICT_6X6_250");
 
+    // Generate calibration board as PDF for printing
+    static std::vector<unsigned char> generateBoardPdf(int squaresX, int squaresY,
+                                                       float squareLength, float markerLength,
+                                                       float pageWidthMm, float pageHeightMm,
+                                                       float marginMm,
+                                                       const std::string& dictionary = "DICT_6X6_250");
+
     // Detect CharucoBoard corners in image
     static nlohmann::json detectMarkers(const cv::Mat& image,
                                         int squaresX, int squaresY,

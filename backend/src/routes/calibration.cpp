@@ -9,6 +9,8 @@
 #include <opencv2/objdetect/charuco_detector.hpp>
 #include <opencv2/objdetect/aruco_dictionary.hpp>
 #include <drogon/utils/Utilities.h>
+#include <hpdf.h>
+#include <cmath>
 
 namespace vision {
 
@@ -39,6 +41,111 @@ cv::Mat CalibrationService::generateBoard(int squaresX, int squaresY, float squa
     board.generateImage(cv::Size(imageWidth, imageHeight), boardImage, 10, 1);
 
     return boardImage;
+}
+
+std::vector<unsigned char> CalibrationService::generateBoardPdf(
+    int squaresX, int squaresY,
+    float squareLength, float markerLength,
+    float pageWidthMm, float pageHeightMm,
+    float marginMm,
+    const std::string& dictionary) {
+
+    // Constants
+    const float MM_TO_POINTS = 72.0f / 25.4f;  // 1 point = 1/72 inch, 1 inch = 25.4mm
+
+    // Calculate desired board physical size in mm (squareLength is in meters)
+    float desiredBoardWidthMm = squaresX * squareLength * 1000.0f;
+    float desiredBoardHeightMm = squaresY * squareLength * 1000.0f;
+
+    // Calculate printable area in mm
+    float printableWidthMm = pageWidthMm - 2.0f * marginMm;
+    float printableHeightMm = pageHeightMm - 2.0f * marginMm;
+
+    // Only scale down if board is too large for printable area (never scale up)
+    float scale = std::min({
+        printableWidthMm / desiredBoardWidthMm,
+        printableHeightMm / desiredBoardHeightMm,
+        1.0f
+    });
+
+    // Final PDF embedding size in mm (this is the physical print size)
+    float pdfBoardWidthMm = desiredBoardWidthMm * scale;
+    float pdfBoardHeightMm = desiredBoardHeightMm * scale;
+
+    // Generate high-resolution board image
+    // The pixel dimensions don't affect physical print size - PDF will scale to fit
+    // We just need enough resolution for good print quality (300+ DPI)
+    const int PIXELS_PER_SQUARE = 400;  // High resolution for print quality
+    int imageWidth = squaresX * PIXELS_PER_SQUARE;
+    int imageHeight = squaresY * PIXELS_PER_SQUARE;
+
+    // Create the CharucoBoard
+    cv::aruco::Dictionary dict = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
+    if (dictionary == "DICT_4X4_50") dict = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_50);
+    else if (dictionary == "DICT_5X5_50") dict = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_5X5_50);
+    else if (dictionary == "DICT_6X6_50") dict = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_50);
+
+    cv::aruco::CharucoBoard board(
+        cv::Size(squaresX, squaresY),
+        squareLength,
+        markerLength,
+        dict
+    );
+
+    // Generate board image with no margin - the entire image IS the board
+    cv::Mat boardImage;
+    board.generateImage(cv::Size(imageWidth, imageHeight), boardImage, 0, 1);
+
+    // Encode as PNG for embedding in PDF
+    std::vector<uchar> pngBuffer;
+    cv::imencode(".png", boardImage, pngBuffer);
+
+    // Create PDF document
+    HPDF_Doc pdf = HPDF_New(nullptr, nullptr);
+    if (!pdf) {
+        spdlog::error("Failed to create PDF document");
+        return {};
+    }
+
+    // Set compression
+    HPDF_SetCompressionMode(pdf, HPDF_COMP_ALL);
+
+    // Add a page with custom size (in points)
+    HPDF_Page page = HPDF_AddPage(pdf);
+    HPDF_Page_SetWidth(page, pageWidthMm * MM_TO_POINTS);
+    HPDF_Page_SetHeight(page, pageHeightMm * MM_TO_POINTS);
+
+    // Load the PNG image from memory
+    HPDF_Image image = HPDF_LoadPngImageFromMem(pdf, pngBuffer.data(), pngBuffer.size());
+    if (!image) {
+        spdlog::error("Failed to load PNG image into PDF");
+        HPDF_Free(pdf);
+        return {};
+    }
+
+    // Convert board dimensions to PDF points and center on page
+    float imageWidthPt = pdfBoardWidthMm * MM_TO_POINTS;
+    float imageHeightPt = pdfBoardHeightMm * MM_TO_POINTS;
+    float xPos = (pageWidthMm * MM_TO_POINTS - imageWidthPt) / 2.0f;
+    float yPos = (pageHeightMm * MM_TO_POINTS - imageHeightPt) / 2.0f;
+
+    // Draw the image at the exact physical dimensions we want
+    // The PDF renderer will scale the high-res image to fit these dimensions
+    HPDF_Page_DrawImage(page, image, xPos, yPos, imageWidthPt, imageHeightPt);
+
+    // Save PDF to memory
+    HPDF_SaveToStream(pdf);
+    HPDF_ResetStream(pdf);
+
+    // Read PDF data from stream
+    std::vector<unsigned char> pdfBuffer;
+    HPDF_UINT32 size = HPDF_GetStreamSize(pdf);
+    pdfBuffer.resize(size);
+    HPDF_ReadFromStream(pdf, pdfBuffer.data(), &size);
+
+    HPDF_Free(pdf);
+
+    return pdfBuffer;
 }
 
 nlohmann::json CalibrationService::detectMarkers(const cv::Mat& image,
@@ -240,6 +347,74 @@ void CalibrationService::registerRoutes(drogon::HttpAppFramework& app) {
             resp->setStatusCode(k200OK);
             resp->setContentTypeString("image/png");
             resp->setBody(std::string(buffer.begin(), buffer.end()));
+            callback(resp);
+        },
+        {Get});
+
+    // GET /api/calibration/board/pdf - Generate calibration board as PDF for printing
+    app.registerHandler(
+        "/api/calibration/board/pdf",
+        [](const HttpRequestPtr& req,
+           std::function<void(const HttpResponsePtr&)>&& callback) {
+            int squaresX = 7;
+            int squaresY = 5;
+            float squareLength = 0.04f;
+            float markerLength = 0.03f;
+            float pageWidthMm = 210.0f;   // A4 default
+            float pageHeightMm = 297.0f;  // A4 default
+            float marginMm = 15.0f;       // Default margin for printer bleed
+            std::string dictionary = "DICT_6X6_50";
+
+            std::string param;
+            param = req->getParameter("squaresX");
+            if (!param.empty()) {
+                squaresX = std::stoi(param);
+            }
+            param = req->getParameter("squaresY");
+            if (!param.empty()) {
+                squaresY = std::stoi(param);
+            }
+            param = req->getParameter("squareLength");
+            if (!param.empty()) {
+                squareLength = std::stof(param);
+            }
+            param = req->getParameter("markerLength");
+            if (!param.empty()) {
+                markerLength = std::stof(param);
+            }
+            param = req->getParameter("dictionary");
+            if (!param.empty()) {
+                dictionary = param;
+            }
+            param = req->getParameter("pageWidth");
+            if (!param.empty()) {
+                pageWidthMm = std::stof(param);
+            }
+            param = req->getParameter("pageHeight");
+            if (!param.empty()) {
+                pageHeightMm = std::stof(param);
+            }
+            param = req->getParameter("margin");
+            if (!param.empty()) {
+                marginMm = std::stof(param);
+            }
+
+            auto pdfBuffer = generateBoardPdf(squaresX, squaresY, squareLength, markerLength,
+                                               pageWidthMm, pageHeightMm, marginMm, dictionary);
+
+            if (pdfBuffer.empty()) {
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setStatusCode(k500InternalServerError);
+                resp->setContentTypeCode(CT_APPLICATION_JSON);
+                resp->setBody(R"({"error": "Failed to generate PDF"})");
+                callback(resp);
+                return;
+            }
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setStatusCode(k200OK);
+            resp->setContentTypeString("application/pdf");
+            resp->setBody(std::string(pdfBuffer.begin(), pdfBuffer.end()));
             callback(resp);
         },
         {Get});

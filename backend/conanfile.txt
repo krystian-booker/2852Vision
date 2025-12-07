@@ -6,6 +6,7 @@ sqlitecpp/3.3.3
 spdlog/1.16.0
 eigen/3.4.0
 onnxruntime/1.18.1
+libharu/2.4.4
 
 [generators]
 CMakeDeps

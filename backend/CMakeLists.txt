@@ -21,6 +21,7 @@ find_package(spdlog REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(onnxruntime REQUIRED)
 find_package(fmt REQUIRED)
+find_package(libharu REQUIRED)
 
 add_compile_definitions(NOMINMAX)
 
@@ -45,6 +46,7 @@ target_link_libraries(backend PRIVATE
     spdlog::spdlog
     Eigen3::Eigen
     onnxruntime::onnxruntime
+    libharu::libharu
     apriltag
     ntcore
     wpiutil
