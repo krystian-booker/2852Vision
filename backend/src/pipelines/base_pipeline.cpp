@@ -1,6 +1,7 @@
 #include "pipelines/base_pipeline.hpp"
 #include "pipelines/apriltag_pipeline.hpp"
 #include "pipelines/object_detection_ml_pipeline.hpp"
+#include "pipelines/optical_flow_pipeline.hpp"
 #include <spdlog/spdlog.h>
 
 namespace vision {
@@ -22,6 +23,11 @@ std::unique_ptr<BasePipeline> BasePipeline::create(const Pipeline& pipeline,
         case PipelineType::ObjectDetectionML: {
             auto config = pipeline.getObjectDetectionMLConfig();
             return std::make_unique<ObjectDetectionMLPipeline>(config, horizontalFov, verticalFov);
+        }
+
+        case PipelineType::OpticalFlow: {
+            auto config = pipeline.getOpticalFlowConfig();
+            return std::make_unique<OpticalFlowPipeline>(config);
         }
 
         default:

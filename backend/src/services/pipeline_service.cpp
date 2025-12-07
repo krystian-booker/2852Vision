@@ -66,6 +66,7 @@ Pipeline PipelineService::createPipeline(Pipeline& pipeline) {
     switch (pipeline.pipeline_type) {
         case PipelineType::AprilTag: typeStr = "AprilTag"; break;
         case PipelineType::ObjectDetectionML: typeStr = "Object Detection (ML)"; break;
+        case PipelineType::OpticalFlow: typeStr = "Optical Flow"; break;
     }
 
     return db.withLock([&pipeline, &typeStr](SQLite::Database& sqlDb) {
@@ -95,6 +96,7 @@ bool PipelineService::updatePipeline(const Pipeline& pipeline) {
     switch (pipeline.pipeline_type) {
         case PipelineType::AprilTag: typeStr = "AprilTag"; break;
         case PipelineType::ObjectDetectionML: typeStr = "Object Detection (ML)"; break;
+        case PipelineType::OpticalFlow: typeStr = "Optical Flow"; break;
     }
 
     return db.withLock([&pipeline, &typeStr](SQLite::Database& sqlDb) {
@@ -156,6 +158,9 @@ nlohmann::json PipelineService::getDefaultConfig(PipelineType type) {
 
         case PipelineType::ObjectDetectionML:
             return ObjectDetectionMLConfig().toJson();
+
+        case PipelineType::OpticalFlow:
+            return OpticalFlowConfig().toJson();
 
         default:
             return nlohmann::json::object();

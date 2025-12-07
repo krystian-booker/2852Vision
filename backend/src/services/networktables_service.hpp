@@ -61,6 +61,10 @@ public:
     // Publish single tag pose
     void publishTagPose(int tagId, const Pose3d& pose, double timestamp);
 
+    // Publish optical flow velocity for carpet odometry
+    void publishOpticalFlowVelocity(double vx_mps, double vy_mps,
+                                     int64_t timestamp_us, int features, bool valid);
+
     // Set whether to auto-publish (called by pipeline manager)
     void setAutoPublish(bool enabled) { autoPublish_.store(enabled, std::memory_order_release); }
     bool isAutoPublishing() const { return autoPublish_.load(std::memory_order_acquire); }
@@ -85,6 +89,13 @@ private:
     nt::DoubleArrayPublisher posePublisher_;
     nt::DoublePublisher poseTimestampPublisher_;
     nt::IntegerPublisher tagsUsedPublisher_;
+
+    // Publishers for optical flow
+    nt::DoubleArrayPublisher opticalFlowVelocityPublisher_;
+    nt::IntegerPublisher opticalFlowTimestampPublisher_;
+    nt::IntegerPublisher opticalFlowFeaturesPublisher_;
+    nt::BooleanPublisher opticalFlowValidPublisher_;
+    bool opticalFlowPublishersInitialized_ = false;
 
     // Cached publishers for detections and tag poses (protected by publisherMutex_)
     std::unordered_map<int, nt::StringPublisher> detectionPublishers_;

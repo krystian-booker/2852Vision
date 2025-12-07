@@ -505,6 +505,21 @@ void VisionThread::run() {
                 std::chrono::steady_clock::now().time_since_epoch()).count();
             nt.publishRobotPose(result.robotPose.value(), timestamp, result.tagsUsed);
         }
+
+        // Publish optical flow velocity if this is an optical flow pipeline
+        if (pipeline_.pipeline_type == PipelineType::OpticalFlow) {
+            try {
+                double vx = result.detections.value("vx_mps", 0.0);
+                double vy = result.detections.value("vy_mps", 0.0);
+                int features = result.detections.value("features", 0);
+                bool valid = result.detections.value("valid", false);
+                int64_t timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                nt.publishOpticalFlowVelocity(vx, vy, timestamp_us, features, valid);
+            } catch (...) {
+                // Ignore parsing errors
+            }
+        }
     }
 }
 

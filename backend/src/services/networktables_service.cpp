@@ -195,4 +195,35 @@ void NetworkTablesService::publishTagPose(int tagId, const Pose3d& pose, double 
     }
 }
 
+void NetworkTablesService::publishOpticalFlowVelocity(double vx_mps, double vy_mps,
+                                                       int64_t timestamp_us, int features, bool valid) {
+    if (!connected_.load(std::memory_order_acquire) || !autoPublish_.load(std::memory_order_acquire)) return;
+
+    try {
+        ensureTable();
+
+        // Initialize optical flow publishers on first use
+        if (!opticalFlowPublishersInitialized_) {
+            auto flowTable = visionTable_->GetSubTable("opticalFlow");
+            opticalFlowVelocityPublisher_ = flowTable->GetDoubleArrayTopic("velocity").Publish();
+            opticalFlowTimestampPublisher_ = flowTable->GetIntegerTopic("timestamp").Publish();
+            opticalFlowFeaturesPublisher_ = flowTable->GetIntegerTopic("features").Publish();
+            opticalFlowValidPublisher_ = flowTable->GetBooleanTopic("valid").Publish();
+            opticalFlowPublishersInitialized_ = true;
+        }
+
+        // Publish velocity as [vx, vy] in m/s (robot frame: +X forward, +Y left)
+        std::vector<double> velocity = {vx_mps, vy_mps};
+        opticalFlowVelocityPublisher_.Set(velocity);
+
+        // Publish metadata
+        opticalFlowTimestampPublisher_.Set(timestamp_us);
+        opticalFlowFeaturesPublisher_.Set(features);
+        opticalFlowValidPublisher_.Set(valid);
+
+    } catch (const std::exception& e) {
+        spdlog::warn("Failed to publish optical flow velocity: {}", e.what());
+    }
+}
+
 } // namespace vision

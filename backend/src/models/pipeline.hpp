@@ -13,12 +13,25 @@ namespace vision {
 
 enum class PipelineType {
     AprilTag,
-    ObjectDetectionML
+    ObjectDetectionML,
+    OpticalFlow
 };
 
 NLOHMANN_JSON_SERIALIZE_ENUM(PipelineType, {
     {PipelineType::AprilTag, "AprilTag"},
-    {PipelineType::ObjectDetectionML, "Object Detection (ML)"}
+    {PipelineType::ObjectDetectionML, "Object Detection (ML)"},
+    {PipelineType::OpticalFlow, "Optical Flow"}
+})
+
+// Optical Flow algorithm selection
+enum class OpticalFlowAlgorithm {
+    LucasKanade,
+    Farneback
+};
+
+NLOHMANN_JSON_SERIALIZE_ENUM(OpticalFlowAlgorithm, {
+    {OpticalFlowAlgorithm::LucasKanade, "LucasKanade"},
+    {OpticalFlowAlgorithm::Farneback, "Farneback"}
 })
 
 // AprilTag configuration
@@ -54,6 +67,39 @@ struct ObjectDetectionMLConfig {
     static ObjectDetectionMLConfig fromJson(const nlohmann::json& j);
 };
 
+// Optical Flow configuration for carpet odometry
+struct OpticalFlowConfig {
+    // Algorithm selection
+    OpticalFlowAlgorithm algorithm = OpticalFlowAlgorithm::LucasKanade;
+
+    // Camera mounting
+    double camera_height_m = 0.1;        // Height above carpet (meters)
+    double camera_yaw_deg = 0.0;         // Rotation about vertical axis (degrees)
+
+    // Lucas-Kanade parameters
+    int lk_max_corners = 100;            // Max feature points to track
+    double lk_quality_level = 0.01;      // Feature detection quality (0-1)
+    double lk_min_distance = 10.0;       // Min pixels between features
+    int lk_win_size = 21;                // Optical flow window size
+    int lk_max_level = 3;                // Pyramid levels
+
+    // Farneback parameters
+    double fb_pyr_scale = 0.5;           // Pyramid scale
+    int fb_levels = 3;                   // Pyramid levels
+    int fb_win_size = 15;                // Window size
+    int fb_iterations = 3;               // Iterations per level
+    int fb_poly_n = 5;                   // Polynomial expansion neighborhood
+    double fb_poly_sigma = 1.2;          // Gaussian sigma for polynomial
+
+    // Filtering
+    double max_velocity_mps = 5.0;       // Reject velocities above this (m/s)
+    int min_features = 10;               // Min features for valid estimate
+    double smoothing_alpha = 0.3;        // Exponential smoothing (0=all old, 1=all new)
+
+    nlohmann::json toJson() const;
+    static OpticalFlowConfig fromJson(const nlohmann::json& j);
+};
+
 struct Pipeline {
     int id = 0;
     std::string name;
@@ -75,6 +121,7 @@ struct Pipeline {
     // Get typed config
     AprilTagConfig getAprilTagConfig() const;
     ObjectDetectionMLConfig getObjectDetectionMLConfig() const;
+    OpticalFlowConfig getOpticalFlowConfig() const;
 };
 
 } // namespace vision
