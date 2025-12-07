@@ -161,7 +161,35 @@ IPMode getIPMode() {
     }
 
     return IPMode::Unknown;
-#elif _WIN32
+#elif defined(__APPLE__)
+    // Check if using DHCP via networksetup
+    // Get primary network service (skip header line with "An asterisk...")
+    FILE* pipe = popen("networksetup -listallnetworkservices 2>/dev/null | grep -v '^An asterisk' | head -1", "r");
+    if (pipe) {
+        char serviceName[128];
+        if (fgets(serviceName, sizeof(serviceName), pipe) != nullptr) {
+            // Remove newline
+            serviceName[strcspn(serviceName, "\n")] = 0;
+            pclose(pipe);
+
+            // Check if this service uses DHCP
+            std::string checkCmd = "networksetup -getinfo \"" + std::string(serviceName) + "\" 2>/dev/null | grep -i 'DHCP'";
+            pipe = popen(checkCmd.c_str(), "r");
+            if (pipe) {
+                char buffer[256];
+                if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                    pclose(pipe);
+                    return IPMode::DHCP;
+                }
+                pclose(pipe);
+                return IPMode::Static;
+            }
+        } else {
+            pclose(pipe);
+        }
+    }
+    return IPMode::Unknown;
+#elif defined(_WIN32)
     // Windows - check adapter settings
     // This would require more complex WMI queries
     return IPMode::Unknown;
@@ -202,7 +230,7 @@ NetworkInfo getNetworkInfo() {
 std::vector<std::string> getNetworkInterfaces() {
     std::vector<std::string> interfaces;
 
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     struct ifaddrs* ifaddr;
     if (getifaddrs(&ifaddr) == 0) {
         std::set<std::string> seen;
@@ -211,7 +239,7 @@ std::vector<std::string> getNetworkInterfaces() {
 
             std::string ifname(ifa->ifa_name);
             // Skip loopback
-            if (ifname == "lo") continue;
+            if (ifname == "lo" || ifname == "lo0") continue;
 
             // Only add each interface once
             if (seen.find(ifname) == seen.end()) {
@@ -312,7 +340,6 @@ std::string calculateDefaultGateway(int teamNumber) {
 }
 
 bool setHostname(const std::string& hostname, std::string& error) {
-#ifdef __linux__
     // Validate hostname first
     std::string validationError = validateHostname(hostname);
     if (!validationError.empty()) {
@@ -320,6 +347,7 @@ bool setHostname(const std::string& hostname, std::string& error) {
         return false;
     }
 
+#ifdef __linux__
     // Use hostnamectl to set the hostname (will apply after reboot)
     std::string cmd = "hostnamectl set-hostname " + hostname + " 2>&1";
     FILE* pipe = popen(cmd.c_str(), "r");
@@ -342,8 +370,35 @@ bool setHostname(const std::string& hostname, std::string& error) {
 
     spdlog::info("Hostname set to '{}' (will apply after reboot)", hostname);
     return true;
+#elif defined(__APPLE__)
+    // Use scutil to set hostname on macOS
+    std::string cmd = "sudo scutil --set HostName " + hostname + " 2>&1";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        error = "Failed to execute scutil command";
+        return false;
+    }
+
+    char buffer[256];
+    std::string output;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+
+    int exitCode = pclose(pipe);
+    if (exitCode != 0) {
+        error = output.empty() ? "scutil command failed (may need sudo)" : output;
+        return false;
+    }
+
+    // Also set ComputerName and LocalHostName for consistency
+    system(("sudo scutil --set ComputerName " + hostname + " 2>/dev/null").c_str());
+    system(("sudo scutil --set LocalHostName " + hostname + " 2>/dev/null").c_str());
+
+    spdlog::info("Hostname set to '{}' on macOS", hostname);
+    return true;
 #else
-    error = "Setting hostname is only supported on Linux";
+    error = "Setting hostname is only supported on Linux and macOS";
     return false;
 #endif
 }
@@ -440,8 +495,34 @@ bool setStaticIP(const std::string& iface, const std::string& ip,
 
     spdlog::info("Static IP {} configured on interface {}", ip, iface);
     return true;
+#elif defined(__APPLE__)
+    // On macOS, iface should be the network service name (e.g., "Wi-Fi", "Ethernet")
+    // Use networksetup to configure static IP
+    std::string cmd = "networksetup -setmanual \"" + iface + "\" " +
+                      ip + " " + subnet + " " + gateway + " 2>&1";
+
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        error = "Failed to execute networksetup command";
+        return false;
+    }
+
+    char buffer[256];
+    std::string output;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+
+    int exitCode = pclose(pipe);
+    if (exitCode != 0) {
+        error = output.empty() ? "networksetup failed (check service name)" : output;
+        return false;
+    }
+
+    spdlog::info("Static IP {} configured on service {}", ip, iface);
+    return true;
 #else
-    error = "Static IP configuration is only supported on Linux";
+    error = "Static IP configuration is only supported on Linux and macOS";
     return false;
 #endif
 }
@@ -513,8 +594,32 @@ bool setDHCP(const std::string& iface, std::string& error) {
 
     spdlog::info("DHCP configured on interface {}", iface);
     return true;
+#elif defined(__APPLE__)
+    // On macOS, iface should be the network service name (e.g., "Wi-Fi", "Ethernet")
+    std::string cmd = "networksetup -setdhcp \"" + iface + "\" 2>&1";
+
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        error = "Failed to execute networksetup command";
+        return false;
+    }
+
+    char buffer[256];
+    std::string output;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+
+    int exitCode = pclose(pipe);
+    if (exitCode != 0) {
+        error = output.empty() ? "networksetup failed (check service name)" : output;
+        return false;
+    }
+
+    spdlog::info("DHCP configured on service {}", iface);
+    return true;
 #else
-    error = "DHCP configuration is only supported on Linux";
+    error = "DHCP configuration is only supported on Linux and macOS";
     return false;
 #endif
 }

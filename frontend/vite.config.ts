@@ -11,11 +11,11 @@ export default defineConfig({
     },
   },
   server: {
-    port: 8080,
+    port: 5173,
     host: '0.0.0.0', // Bind to all interfaces (IPv4 and IPv6)
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:5001',
         changeOrigin: true,
       },
     },

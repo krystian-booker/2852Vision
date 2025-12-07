@@ -134,7 +134,7 @@ std::vector<std::string> FieldLayoutService::getAvailableFields() const {
 }
 
 std::optional<FieldLayout> FieldLayoutService::getFieldLayout(const std::string& fieldName) const {
-    std::string filepath = fieldsDir_ + "\\" + fieldName;
+    std::string filepath = (std::filesystem::path(fieldsDir_) / fieldName).string();
 
     if (!std::filesystem::exists(filepath)) {
         spdlog::warn("Field layout not found: {}", filepath);

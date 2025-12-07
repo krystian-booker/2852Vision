@@ -1,8 +1,13 @@
 #include "pipelines/optical_flow_pipeline.hpp"
 #include <spdlog/spdlog.h>
+#define _USE_MATH_DEFINES
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 namespace vision {
 

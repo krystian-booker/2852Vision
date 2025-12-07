@@ -6,15 +6,17 @@
 #ifdef _WIN32
 #include <shlobj.h>
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <unistd.h>
+#include <limits.h>
+#else
+#include <unistd.h>
+#include <limits.h>
 #endif
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
-#endif
-
-#ifndef _WIN32
-#include <unistd.h>
-#include <limits.h>
 #endif
 
 namespace vision {
@@ -52,24 +54,6 @@ namespace {
         return defaultValue;
     }
 
-    std::string getExecutableDirectory() {
-#ifdef _WIN32
-        char path[MAX_PATH];
-        if (GetModuleFileNameA(NULL, path, MAX_PATH) > 0) {
-            std::filesystem::path exePath(path);
-            return exePath.parent_path().string();
-        }
-#else
-        char path[PATH_MAX];
-        ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
-        if (count != -1) {
-            std::filesystem::path exePath(std::string(path, count));
-            return exePath.parent_path().string();
-        }
-#endif
-        return ".";
-    }
-
     std::string getAppDataDirectory() {
 #ifdef _WIN32
         char path[MAX_PATH];
@@ -77,10 +61,45 @@ namespace {
             std::filesystem::path appDataPath(path);
             return (appDataPath / "2852Vision").string();
         }
+#elif defined(__APPLE__)
+        const char* home = std::getenv("HOME");
+        if (home) {
+            std::filesystem::path appSupport =
+                std::filesystem::path(home) / "Library" / "Application Support" / "2852Vision";
+            return appSupport.string();
+        }
 #endif
-        // On Linux or if SHGetFolderPathA fails, use ./data
+        // On Linux or if platform-specific methods fail, use ./data
         return "./data";
     }
+}
+
+std::string Config::getExecutableDirectory() {
+#ifdef _WIN32
+    char path[MAX_PATH];
+    if (GetModuleFileNameA(NULL, path, MAX_PATH) > 0) {
+        std::filesystem::path exePath(path);
+        return exePath.parent_path().string();
+    }
+#elif defined(__APPLE__)
+    char path[PATH_MAX];
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) == 0) {
+        char realPath[PATH_MAX];
+        if (realpath(path, realPath)) {
+            std::filesystem::path exePath(realPath);
+            return exePath.parent_path().string();
+        }
+    }
+#else
+    char path[PATH_MAX];
+    ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
+    if (count != -1) {
+        std::filesystem::path exePath(std::string(path, count));
+        return exePath.parent_path().string();
+    }
+#endif
+    return ".";
 }
 
 void Config::load() {

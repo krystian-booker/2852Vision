@@ -108,5 +108,11 @@ if(WIN32)
         "$<TARGET_FILE_DIR:backend>"
         COMMENT "Copying WPILib DLLs..."
     )
-    
+elseif(APPLE)
+    add_custom_command(TARGET backend POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/data"
+        "$<TARGET_FILE_DIR:backend>/data"
+        COMMENT "Copying data directory..."
+    )
 endif()

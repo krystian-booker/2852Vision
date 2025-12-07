@@ -74,11 +74,26 @@ void SystemController::registerRoutes(drogon::HttpAppFramework& app) {
                 resp->setBody(R"({"error": "Reboot command failed"})");
                 callback(resp);
             }
+#elif defined(__APPLE__)
+            int result = system("sudo shutdown -r now");
+            if (result == 0) {
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setStatusCode(k200OK);
+                resp->setContentTypeCode(CT_APPLICATION_JSON);
+                resp->setBody(R"({"success": true})");
+                callback(resp);
+            } else {
+                auto resp = HttpResponse::newHttpResponse();
+                resp->setStatusCode(k500InternalServerError);
+                resp->setContentTypeCode(CT_APPLICATION_JSON);
+                resp->setBody(R"({"error": "Reboot command failed (may need sudo)"})");
+                callback(resp);
+            }
 #else
             auto resp = HttpResponse::newHttpResponse();
             resp->setStatusCode(k400BadRequest);
             resp->setContentTypeCode(CT_APPLICATION_JSON);
-            resp->setBody(R"({"error": "Reboot only supported on Linux"})");
+            resp->setBody(R"({"error": "Reboot only supported on Linux and macOS"})");
             callback(resp);
 #endif
         },

@@ -44,6 +44,9 @@ struct Config {
     bool isDevelopment() const { return environment == "development"; }
     bool isProduction() const { return environment == "production"; }
 
+    // Get the directory containing the executable
+    static std::string getExecutableDirectory();
+
 private:
     Config() = default;
     static Config instance_;

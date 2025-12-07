@@ -7,6 +7,8 @@
 #include "core/config.hpp"
 #include "core/database.hpp"
 #include "services/camera_service.hpp"
+#include "services/settings_service.hpp"
+#include "services/networktables_service.hpp"
 #include "vision/field_layout.hpp"
 #include "services/pipeline_service.hpp"
 #include "services/streamer_service.hpp"
@@ -99,6 +101,49 @@ int main(int argc, char** argv) {
     vision::DatabaseController::registerRoutes(app(), config.database_path);
     vision::CalibrationService::registerRoutes(app());
     vision::NetworkTablesRoutes::registerRoutes(app());
+
+    // Check for static frontend files (www/ folder next to executable)
+    std::string exeDir = vision::Config::getExecutableDirectory();
+    auto wwwPath = std::filesystem::path(exeDir) / "www";
+
+    if (std::filesystem::exists(wwwPath)) {
+        spdlog::info("Serving static frontend from: {}", wwwPath.string());
+
+        // Configure Drogon to serve static files from www/
+        app().setDocumentRoot(wwwPath.string());
+        app().setFileTypes({"html", "js", "css", "png", "jpg", "jpeg", "gif", "ico", "svg", "woff", "woff2", "ttf", "eot", "json", "map"});
+
+        // SPA fallback: serve index.html for non-API, non-file routes
+        // This allows React Router to handle client-side routing
+        auto indexPath = wwwPath / "index.html";
+        if (std::filesystem::exists(indexPath)) {
+            app().registerHandler(
+                "/{path}",
+                [indexPath = indexPath.string()](const HttpRequestPtr& req,
+                              std::function<void(const HttpResponsePtr&)>&& callback) {
+                    // Only serve index.html for non-API routes
+                    auto path = req->path();
+                    if (path.find("/api/") == 0) {
+                        // Let API routes 404 naturally
+                        auto resp = HttpResponse::newHttpResponse();
+                        resp->setStatusCode(k404NotFound);
+                        resp->setBody("{\"error\": \"Not found\"}");
+                        resp->setContentTypeCode(CT_APPLICATION_JSON);
+                        callback(resp);
+                        return;
+                    }
+
+                    // Serve index.html for SPA routes
+                    auto resp = HttpResponse::newFileResponse(indexPath);
+                    callback(resp);
+                },
+                {Get}
+            );
+            spdlog::info("SPA fallback enabled - serving index.html for client-side routes");
+        }
+    } else {
+        spdlog::info("No www/ folder found at {} - static frontend serving disabled", wwwPath.string());
+    }
 
     // Start server
     spdlog::info("Starting server on {}:{}", config.server.host, config.server.port);
