@@ -1,18 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
-import type { Camera, Pipeline, PipelineConfig, PipelineResults, CameraControls } from '@/types'
-import { POLLING_INTERVALS } from '@/constants/dashboard'
+import type { Camera, Pipeline, PipelineConfig, CameraControls } from '@/types'
 
 // Query Keys
 export const queryKeys = {
   cameras: ['cameras'] as const,
   camera: (id: string) => ['cameras', id] as const,
-  cameraStatus: (id: string) => ['cameras', id, 'status'] as const,
   cameraControls: (id: string) => ['cameras', id, 'controls'] as const,
   pipelines: (cameraId: string) => ['pipelines', cameraId] as const,
   pipeline: (id: string) => ['pipelines', 'detail', id] as const,
-  pipelineResults: (cameraId: string, pipelineId: string) =>
-    ['pipelines', cameraId, pipelineId, 'results'] as const,
   pipelineLabels: (id: string) => ['pipelines', id, 'labels'] as const,
   mlAvailability: ['ml', 'availability'] as const,
 }
@@ -24,18 +20,6 @@ export function useCameras() {
   return useQuery({
     queryKey: queryKeys.cameras,
     queryFn: () => api.get<Camera[]>('/api/cameras'),
-  })
-}
-
-/**
- * Fetch camera connection status.
- */
-export function useCameraStatus(cameraId: string, enabled = true) {
-  return useQuery({
-    queryKey: queryKeys.cameraStatus(cameraId),
-    queryFn: () => api.get<{ connected: boolean }>(`/api/cameras/status/${cameraId}`),
-    enabled: enabled && !!cameraId,
-    refetchInterval: 5000,
   })
 }
 
@@ -127,34 +111,6 @@ export function useUpdatePipelineConfig(pipelineId: string) {
   return useMutation({
     mutationFn: (config: PipelineConfig) =>
       api.put(`/api/pipelines/${pipelineId}/config`, config),
-  })
-}
-
-/**
- * Fetch pipeline results with polling.
- */
-export function usePipelineResults(
-  cameraId: string,
-  pipelineId: string,
-  enabled = true
-) {
-  return useQuery({
-    queryKey: queryKeys.pipelineResults(cameraId, pipelineId),
-    queryFn: async () => {
-      const data = await api.get<Record<string, unknown>>(`/api/cameras/results/${cameraId}`)
-
-      const pipelineResults = Array.isArray(data)
-        ? data.find((r: { pipeline_id?: number }) => String(r.pipeline_id) === String(pipelineId))
-        : (data as Record<string, unknown>)?.[pipelineId]
-
-      if (!pipelineResults) {
-        return { apriltag: [], ml: [], robotPose: null, processingTimeMs: null } as PipelineResults
-      }
-
-      return pipelineResults as Record<string, unknown>
-    },
-    enabled: enabled && !!cameraId && !!pipelineId,
-    refetchInterval: POLLING_INTERVALS.RESULTS,
   })
 }
 

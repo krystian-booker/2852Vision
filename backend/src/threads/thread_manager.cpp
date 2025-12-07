@@ -1,9 +1,13 @@
+// Windows compatibility - must be included before any Drogon headers
+#include "platform/win32_compat.hpp"
+
 #include "threads/thread_manager.hpp"
 #include "services/camera_service.hpp"
 #include "services/pipeline_service.hpp"
 #include "services/streamer_service.hpp"
 #include "services/settings_service.hpp"
 #include "services/networktables_service.hpp"
+#include "routes/vision_ws.hpp"
 #include "vision/field_layout.hpp"
 #include <spdlog/spdlog.h>
 
@@ -174,13 +178,24 @@ void CameraThread::run() {
     static constexpr int LOG_INTERVAL = 100;  // Log every 100 frames
 
     bool connectionErrorLogged = false;
+    bool wasConnected = false;
+    bool wasStreaming = false;
 
     while (running_.load()) {
         // Try to connect if not connected
         if (!driver_->isConnected()) {
+             // Notify if connection was lost
+             if (wasConnected) {
+                 wasConnected = false;
+                 wasStreaming = false;
+                 VisionWebSocket::instance().broadcastCameraStatus(cameraId, false, false);
+             }
+
              if (driver_->connect(connectionErrorLogged)) {
                  spdlog::info("Connected to camera {}", cameraId);
                  connectionErrorLogged = false;
+                 wasConnected = true;
+                 VisionWebSocket::instance().broadcastCameraStatus(cameraId, true, false);
 
                  // Apply initial settings
                  bool needsAutoSync = false;
@@ -255,6 +270,12 @@ void CameraThread::run() {
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - startTime).count();
             spdlog::info("Camera {} received first frame after {}ms", cameraId, elapsed);
+
+            // Notify that camera is now streaming
+            if (!wasStreaming) {
+                wasStreaming = true;
+                VisionWebSocket::instance().broadcastCameraStatus(cameraId, true, true);
+            }
         }
 
         totalFrameCount++;
@@ -480,6 +501,7 @@ void VisionThread::run() {
         );
 
         // Update results
+        nlohmann::json resultsJson;
         {
             std::lock_guard<std::mutex> lock(resultsMutex_);
             latestResults_ = {
@@ -494,7 +516,12 @@ void VisionThread::run() {
             } else {
                 latestResults_["robot_pose"] = nullptr;
             }
+            resultsJson = latestResults_;
         }
+
+        // Broadcast to WebSocket subscribers
+        VisionWebSocket::instance().broadcastPipelineResults(
+            pipeline_.camera_id, pipeline_.id, resultsJson);
 
         // Publish to NetworkTables (methods check connection internally)
         auto& nt = NetworkTablesService::instance();

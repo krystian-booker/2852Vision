@@ -6,7 +6,6 @@ import { APRILTAG_DEFAULTS, ML_DEFAULTS, MJPEG_PORT } from '@/constants/dashboar
 import { quaternionToEuler } from '@/lib/math'
 import {
   useCameras,
-  useCameraStatus,
   useCameraControls,
   useUpdateCameraControls,
   usePipelines,
@@ -14,12 +13,13 @@ import {
   useUpdatePipeline,
   useDeletePipeline,
   useUpdatePipelineConfig,
-  usePipelineResults,
   usePipelineLabels,
   useMLAvailability,
   useUploadPipelineFile,
   useDeletePipelineFile,
 } from '@/lib/queries'
+import { useCameraStatus } from '@/hooks/useCameraStatus'
+import { usePipelineResults as useWSPipelineResults } from '@/hooks/usePipelineResults'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -61,13 +61,14 @@ export default function Dashboard() {
 
   // React Query hooks
   const { data: cameras = [] } = useCameras()
-  const { data: cameraStatus } = useCameraStatus(selectedCameraId, !!selectedCameraId)
   const { data: controlsData } = useCameraControls(selectedCameraId, !!selectedCameraId)
   const { data: pipelines = [] } = usePipelines(selectedCameraId, !!selectedCameraId)
-  const { data: rawResults } = usePipelineResults(
-    selectedCameraId,
-    selectedPipelineId,
-    !!selectedCameraId && !!selectedPipelineId
+
+  // WebSocket hooks for real-time data
+  const cameraStatus = useCameraStatus(parseInt(selectedCameraId) || 0)
+  const rawResults = useWSPipelineResults(
+    parseInt(selectedCameraId) || 0,
+    parseInt(selectedPipelineId) || 0
   )
   const { data: labelsData } = usePipelineLabels(
     selectedPipelineId,
@@ -92,19 +93,21 @@ export default function Dashboard() {
     setCameras(cameras)
   }, [cameras, setCameras])
 
-  // Auto-select first camera
+  // Auto-select first camera when cameras change
   useEffect(() => {
     if (!cameras.length) {
-      setSelectedCameraId('')
+      setSelectedCameraId((currentId) => currentId !== '' ? '' : currentId)
       return
     }
 
-    const currentExists = cameras.some((camera) => camera.id.toString() === selectedCameraId)
-
-    if (!selectedCameraId || !currentExists) {
-      setSelectedCameraId(cameras[0].id.toString())
-    }
-  }, [cameras, selectedCameraId])
+    setSelectedCameraId((currentId) => {
+      const currentExists = cameras.some((camera) => camera.id.toString() === currentId)
+      if (!currentId || !currentExists) {
+        return cameras[0].id.toString()
+      }
+      return currentId
+    })
+  }, [cameras])
 
   // Sync controls from server
   useEffect(() => {
@@ -125,19 +128,27 @@ export default function Dashboard() {
     }
   }, [controlsData])
 
-  // Auto-select first pipeline
+  // Auto-select first pipeline when pipelines change
   useEffect(() => {
     if (pipelines.length > 0) {
-      const currentExists = pipelines.find((p) => p.id.toString() === selectedPipelineId)
-      if (!selectedPipelineId || !currentExists) {
-        setSelectedPipelineId(pipelines[0].id.toString())
-      }
+      setSelectedPipelineId((currentId) => {
+        const currentExists = pipelines.find((p) => p.id.toString() === currentId)
+        if (!currentId || !currentExists) {
+          return pipelines[0].id.toString()
+        }
+        return currentId
+      })
     } else {
-      setSelectedPipelineId('')
-      setPipelineType('')
-      setPipelineConfig({})
+      setSelectedPipelineId((currentId) => {
+        if (currentId !== '') {
+          setPipelineType('')
+          setPipelineConfig({})
+          return ''
+        }
+        return currentId
+      })
     }
-  }, [pipelines, selectedPipelineId])
+  }, [pipelines])
 
   // Sync labels
   useEffect(() => {
@@ -183,7 +194,7 @@ export default function Dashboard() {
       return { apriltag: [], ml: [], robotPose: null, processingTimeMs: null }
     }
 
-    const resultsData = rawResults as Record<string, unknown>
+    const resultsData = rawResults as unknown as Record<string, unknown>
 
     if (pipelineType === PIPELINE_TYPES.APRILTAG) {
       const detections = ((resultsData.detections as AprilTagDetection[]) || []).map((det) => {

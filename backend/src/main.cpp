@@ -25,6 +25,7 @@
 #include "routes/database.hpp"
 #include "routes/calibration.hpp"
 #include "routes/networktables.hpp"
+#include "routes/vision_ws.hpp"
 
 #include <opencv2/core/utils/logger.hpp>
 #include <filesystem>
@@ -60,6 +61,19 @@ int main(int argc, char** argv) {
         spdlog::info("Startup: connecting to NetworkTables for team {}", globalSettings.team_number);
         vision::NetworkTablesService::instance().connect(globalSettings.team_number);
     }
+
+    // Register WebSocket callback for NetworkTables status changes
+    vision::NetworkTablesService::instance().registerStatusCallback(
+        [](const vision::NTStatus& status) {
+            vision::VisionWebSocket::instance().broadcastNTStatus(status.toJson());
+        }
+    );
+
+    // Start the status monitor to detect connection changes
+    vision::NetworkTablesService::instance().startStatusMonitor();
+
+    // Start metrics broadcast via WebSocket
+    vision::VisionWebSocket::instance().startMetricsBroadcast();
 
     // Start all configured cameras and pipelines at startup so acquisition/processing is always running
     {
@@ -157,6 +171,10 @@ int main(int argc, char** argv) {
         .addListener(config.server.host, config.server.port)
         .setThreadNum(config.server.threads)
         .run();
+
+    // Stop the status monitor and metrics broadcast
+    vision::VisionWebSocket::instance().stopMetricsBroadcast();
+    vision::NetworkTablesService::instance().stopStatusMonitor();
 
     // Shutdown threads on exit
     vision::ThreadManager::instance().shutdown();

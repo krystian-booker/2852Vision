@@ -226,4 +226,59 @@ void NetworkTablesService::publishOpticalFlowVelocity(double vx_mps, double vy_m
     }
 }
 
+void NetworkTablesService::registerStatusCallback(StatusCallback callback) {
+    std::lock_guard<std::mutex> lock(callbackMutex_);
+    statusCallbacks_.push_back(std::move(callback));
+}
+
+void NetworkTablesService::startStatusMonitor() {
+    if (monitorRunning_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    monitorRunning_.store(true, std::memory_order_release);
+    lastStatus_ = getStatus();
+
+    monitorThread_ = std::thread([this]() {
+        spdlog::info("NetworkTables status monitor started");
+
+        while (monitorRunning_.load(std::memory_order_acquire)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+            auto currentStatus = getStatus();
+
+            // Check if status changed
+            if (currentStatus.connected != lastStatus_.connected ||
+                currentStatus.mode != lastStatus_.mode ||
+                currentStatus.serverAddress != lastStatus_.serverAddress ||
+                currentStatus.teamNumber != lastStatus_.teamNumber) {
+
+                spdlog::debug("NetworkTables status changed: connected={}, mode={}",
+                              currentStatus.connected, currentStatus.mode);
+
+                lastStatus_ = currentStatus;
+
+                // Notify all registered callbacks
+                std::lock_guard<std::mutex> lock(callbackMutex_);
+                for (const auto& callback : statusCallbacks_) {
+                    try {
+                        callback(currentStatus);
+                    } catch (const std::exception& e) {
+                        spdlog::warn("Status callback error: {}", e.what());
+                    }
+                }
+            }
+        }
+
+        spdlog::info("NetworkTables status monitor stopped");
+    });
+}
+
+void NetworkTablesService::stopStatusMonitor() {
+    monitorRunning_.store(false, std::memory_order_release);
+    if (monitorThread_.joinable()) {
+        monitorThread_.join();
+    }
+}
+
 } // namespace vision

@@ -24,12 +24,79 @@ import { StatusBadge } from '@/components/shared'
 import { toast } from '@/hooks/use-toast'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
-import type { Camera, CameraStatus, DeviceInfo } from '@/types'
+import { useCameraStatus } from '@/hooks/useCameraStatus'
+import type { Camera, DeviceInfo } from '@/types'
 
 interface CameraProfile {
   width: number
   height: number
   fps: number
+}
+
+// Separate component to use the useCameraStatus hook for each camera
+function CameraRow({
+  camera,
+  onEdit,
+  onDelete,
+}: {
+  camera: Camera
+  onEdit: (camera: Camera) => void
+  onDelete: (camera: Camera) => void
+}) {
+  const status = useCameraStatus(camera.id)
+
+  return (
+    <TableRow
+      key={camera.id}
+      data-testid="camera-row"
+      data-camera-name={camera.name}
+    >
+      <TableCell className="font-medium">{camera.name}</TableCell>
+      <TableCell>{camera.camera_type}</TableCell>
+      <TableCell>
+        <StatusBadge
+          status={status?.connected ? 'online' : 'offline'}
+          label={status?.connected ? 'Connected' : 'Disconnected'}
+        />
+      </TableCell>
+      <TableCell className="text-sm">
+        {camera.resolution_json && camera.framerate ? (
+          (() => {
+            try {
+              const resolution = JSON.parse(camera.resolution_json)
+              return `${resolution.width}x${resolution.height} @ ${camera.framerate} FPS`
+            } catch {
+              return '—'
+            }
+          })()
+        ) : (
+          <span className="text-muted">Not configured</span>
+        )}
+      </TableCell>
+      <TableCell className="text-right">
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onEdit(camera)}
+            aria-label={`Edit ${camera.name}`}
+            data-testid={`edit-camera-${camera.id}`}
+          >
+            <Edit2 className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onDelete(camera)}
+            aria-label={`Delete ${camera.name}`}
+            data-testid={`delete-camera-${camera.id}`}
+          >
+            <Trash2 className="h-4 w-4 text-[var(--color-danger)]" />
+          </Button>
+        </div>
+      </TableCell>
+    </TableRow>
+  )
 }
 
 export default function Cameras() {
@@ -38,7 +105,6 @@ export default function Cameras() {
   const updateCamera = useAppStore((state) => state.updateCamera)
   const deleteCamera = useAppStore((state) => state.deleteCamera)
 
-  const [cameraStatuses, setCameraStatuses] = useState<Record<number, CameraStatus>>({})
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
@@ -72,33 +138,6 @@ export default function Cameras() {
   useEffect(() => {
     fetchCameras()
   }, [])
-
-  // Poll camera statuses
-  useEffect(() => {
-    if (cameras.length === 0) return
-
-    const fetchStatuses = async () => {
-      const statusPromises = cameras.map(async (cam) => {
-        try {
-          const status = await api.get<CameraStatus>(`/api/cameras/status/${cam.id}`)
-          return { id: cam.id, status }
-        } catch {
-          return { id: cam.id, status: { connected: false, error: 'Failed to fetch status' } }
-        }
-      })
-
-      const results = await Promise.all(statusPromises)
-      const statusMap: Record<number, CameraStatus> = {}
-      results.forEach(({ id, status }) => {
-        statusMap[id] = status
-      })
-      setCameraStatuses(statusMap)
-    }
-
-    fetchStatuses()
-    const interval = setInterval(fetchStatuses, 3000)
-    return () => clearInterval(interval)
-  }, [cameras])
 
   const fetchCameras = async () => {
     try {
@@ -553,61 +592,14 @@ export default function Cameras() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {cameras.map((camera) => {
-                  const status = cameraStatuses[camera.id]
-                  return (
-                    <TableRow
-                      key={camera.id}
-                      data-testid="camera-row"
-                      data-camera-name={camera.name}
-                    >
-                      <TableCell className="font-medium">{camera.name}</TableCell>
-                      <TableCell>{camera.camera_type}</TableCell>
-                      <TableCell>
-                        <StatusBadge
-                          status={status?.connected ? 'online' : 'offline'}
-                          label={status?.connected ? 'Connected' : 'Disconnected'}
-                        />
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {camera.resolution_json && camera.framerate ? (
-                          (() => {
-                            try {
-                              const resolution = JSON.parse(camera.resolution_json)
-                              return `${resolution.width}x${resolution.height} @ ${camera.framerate} FPS`
-                            } catch {
-                              return '—'
-                            }
-                          })()
-                        ) : (
-                          <span className="text-muted">Not configured</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openEditModal(camera)}
-                            aria-label={`Edit ${camera.name}`}
-                            data-testid={`edit-camera-${camera.id}`}
-                          >
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openDeleteModal(camera)}
-                            aria-label={`Delete ${camera.name}`}
-                            data-testid={`delete-camera-${camera.id}`}
-                          >
-                            <Trash2 className="h-4 w-4 text-[var(--color-danger)]" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
+                {cameras.map((camera) => (
+                  <CameraRow
+                    key={camera.id}
+                    camera={camera}
+                    onEdit={openEditModal}
+                    onDelete={openDeleteModal}
+                  />
+                ))}
               </TableBody>
             </Table>
           )}

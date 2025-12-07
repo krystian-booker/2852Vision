@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
-import { api } from '../../lib/api'
+import { useState } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
+import { useNetworkTablesStatus } from '@/hooks/useNetworkTablesStatus'
 import {
   LayoutDashboard,
   Camera,
@@ -22,22 +22,8 @@ const navigation = [
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const location = useLocation()
-  const [ntConnected, setNtConnected] = useState(false)
-
-  useEffect(() => {
-    const checkConnection = async () => {
-      try {
-        const status: any = await api.get('/api/networktables/status')
-        setNtConnected(status.connected)
-      } catch (e) {
-        setNtConnected(false)
-      }
-    }
-
-    checkConnection()
-    const interval = setInterval(checkConnection, 2000)
-    return () => clearInterval(interval)
-  }, [])
+  const { status: ntStatus } = useNetworkTablesStatus()
+  const ntConnected = ntStatus.connected
 
   return (
     <div className="min-h-screen">

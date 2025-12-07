@@ -6,6 +6,9 @@
 #include <unordered_map>
 #include <atomic>
 #include <mutex>
+#include <functional>
+#include <thread>
+#include <vector>
 #include <nlohmann/json.hpp>
 #include "utils/geometry.hpp"
 #include <networktables/NetworkTableInstance.h>
@@ -17,6 +20,12 @@
 #include <networktables/IntegerTopic.h>
 
 namespace vision {
+
+// Forward declaration
+struct NTStatus;
+
+// Callback type for status change notifications
+using StatusCallback = std::function<void(const NTStatus&)>;
 
 // Connection status for UI
 struct NTStatus {
@@ -69,6 +78,11 @@ public:
     void setAutoPublish(bool enabled) { autoPublish_.store(enabled, std::memory_order_release); }
     bool isAutoPublishing() const { return autoPublish_.load(std::memory_order_acquire); }
 
+    // Status change notification system
+    void registerStatusCallback(StatusCallback callback);
+    void startStatusMonitor();
+    void stopStatusMonitor();
+
 private:
     NetworkTablesService() = default;
 
@@ -104,6 +118,13 @@ private:
 
     // Helper to ensure table exists
     void ensureTable();
+
+    // Status monitor members
+    std::vector<StatusCallback> statusCallbacks_;
+    std::mutex callbackMutex_;
+    std::thread monitorThread_;
+    std::atomic<bool> monitorRunning_{false};
+    NTStatus lastStatus_;
 };
 
 } // namespace vision

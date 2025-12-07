@@ -1,32 +1,15 @@
-import { useState } from 'react'
 import { Activity, Cpu, HardDrive, Thermometer, AlertCircle } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { api } from '@/lib/api'
-import { usePolling } from '@/hooks/usePolling'
+import { useVisionSubscription, useVisionWSConnected } from '@/hooks/useVisionWebSocket'
 import type { MetricsSummary, PipelineMetrics, MetricsThresholds } from '@/types'
 
 export default function Monitoring() {
-  const [metrics, setMetrics] = useState<MetricsSummary | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  const fetchMetrics = async () => {
-    try {
-      const data = await api.get<MetricsSummary>('/api/metrics/summary')
-      setMetrics(data)
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch metrics')
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  // Poll every 2 seconds
-  usePolling(fetchMetrics, 2000)
+  const metrics = useVisionSubscription<MetricsSummary>('metrics')
+  const wsConnected = useVisionWSConnected()
+  const isLoading = !metrics && wsConnected
 
   // Helper to determine pipeline status based on metrics
   const getPipelineStatus = (p: PipelineMetrics, thresholds: MetricsThresholds) => {
@@ -49,14 +32,14 @@ export default function Monitoring() {
     )
   }
 
-  if (error) {
+  if (!wsConnected) {
     return (
       <div className="p-6">
         <div className="flex items-center justify-center h-96">
           <div className="text-center">
             <AlertCircle className="h-12 w-12 text-[var(--color-danger)] mx-auto mb-4" />
-            <h2 className="text-xl font-semibold mb-2">Metrics Unavailable</h2>
-            <p className="text-muted">{error}</p>
+            <h2 className="text-xl font-semibold mb-2">Connection Lost</h2>
+            <p className="text-muted">WebSocket disconnected. Reconnecting...</p>
           </div>
         </div>
       </div>
