@@ -3,10 +3,15 @@
 
 #include "routes/vision_ws.hpp"
 #include "services/networktables_service.hpp"
+#include "threads/thread_manager.hpp"
 #include "metrics/registry.hpp"
 #include <spdlog/spdlog.h>
 
 namespace vision {
+
+// Static member definitions
+std::mutex VisionWebSocket::clientsMutex_;
+std::map<drogon::WebSocketConnectionPtr, ClientSubscriptions> VisionWebSocket::clients_;
 
 VisionWebSocket& VisionWebSocket::instance() {
     static VisionWebSocket inst;
@@ -17,22 +22,18 @@ void VisionWebSocket::handleNewConnection(
     const drogon::HttpRequestPtr& req,
     const drogon::WebSocketConnectionPtr& conn) {
 
-    spdlog::info("VisionWebSocket: Client connected from {}",
-                 conn->peerAddr().toIpPort());
-
-    {
-        std::lock_guard<std::mutex> lock(clientsMutex_);
-        clients_[conn] = ClientSubscriptions{};
-    }
+    std::lock_guard<std::mutex> lock(clientsMutex_);
+    clients_[conn] = ClientSubscriptions{};
+    spdlog::info("VisionWebSocket: Client connected from {}, total clients: {}",
+                 conn->peerAddr().toIpPort(), clients_.size());
 }
 
 void VisionWebSocket::handleConnectionClosed(
     const drogon::WebSocketConnectionPtr& conn) {
 
-    spdlog::info("VisionWebSocket: Client disconnected");
-
     std::lock_guard<std::mutex> lock(clientsMutex_);
     clients_.erase(conn);
+    spdlog::info("VisionWebSocket: Client disconnected, remaining clients: {}", clients_.size());
 }
 
 void VisionWebSocket::handleNewMessage(
@@ -40,9 +41,19 @@ void VisionWebSocket::handleNewMessage(
     std::string&& message,
     const drogon::WebSocketMessageType& type) {
 
-    // Handle WebSocket ping/pong
+    // Handle WebSocket ping/pong at protocol level
     if (type == drogon::WebSocketMessageType::Ping) {
         conn->send("", drogon::WebSocketMessageType::Pong);
+        return;
+    }
+
+    // Only process text messages - ignore binary, pong, close, etc.
+    if (type != drogon::WebSocketMessageType::Text) {
+        return;
+    }
+
+    // Skip empty messages
+    if (message.empty()) {
         return;
     }
 
@@ -57,9 +68,13 @@ void VisionWebSocket::handleNewMessage(
         } else if (msgType == "ping") {
             nlohmann::json response = {{"type", "pong"}};
             conn->send(response.dump());
+        } else if (!msgType.empty()) {
+            spdlog::debug("VisionWebSocket: Unknown message type: {}", msgType);
         }
     } catch (const std::exception& e) {
         spdlog::warn("VisionWebSocket: Failed to parse message: {}", e.what());
+        nlohmann::json error = {{"type", "error"}, {"message", "Invalid JSON format"}};
+        conn->send(error.dump());
     }
 }
 
@@ -68,52 +83,83 @@ void VisionWebSocket::handleSubscribe(
     const nlohmann::json& msg) {
 
     std::string topic = msg.value("topic", "");
+    nlohmann::json response;
+    bool shouldSend = false;
 
-    std::lock_guard<std::mutex> lock(clientsMutex_);
-    auto it = clients_.find(conn);
-    if (it == clients_.end()) return;
+    {
+        std::lock_guard<std::mutex> lock(clientsMutex_);
+        auto it = clients_.find(conn);
+        if (it == clients_.end()) return;
 
-    auto& subs = it->second;
+        auto& subs = it->second;
 
-    if (topic == "metrics") {
-        subs.metrics = true;
-        spdlog::debug("VisionWebSocket: Client subscribed to metrics");
+        if (topic == "metrics") {
+            subs.metrics = true;
+            spdlog::debug("VisionWebSocket: Client subscribed to metrics");
 
-        // Send current metrics immediately
-        auto summary = MetricsRegistry::instance().getSummary();
-        nlohmann::json response = {
-            {"type", "metrics"},
-            {"data", summary.toJson()}
-        };
-        conn->send(response.dump());
+            // Prepare current metrics for immediate send
+            auto summary = MetricsRegistry::instance().getSummary();
+            response = {
+                {"type", "metrics"},
+                {"data", summary.toJson()}
+            };
+            shouldSend = true;
 
-    } else if (topic == "nt_status") {
-        subs.ntStatus = true;
-        spdlog::debug("VisionWebSocket: Client subscribed to nt_status");
+        } else if (topic == "nt_status") {
+            subs.ntStatus = true;
+            spdlog::debug("VisionWebSocket: Client subscribed to nt_status");
 
-        // Send current NT status immediately
-        auto status = NetworkTablesService::instance().getStatus();
-        nlohmann::json response = {
-            {"type", "nt_status"},
-            {"data", status.toJson()}
-        };
-        conn->send(response.dump());
+            // Prepare current NT status for immediate send
+            auto status = NetworkTablesService::instance().getStatus();
+            response = {
+                {"type", "nt_status"},
+                {"data", status.toJson()}
+            };
+            shouldSend = true;
 
-    } else if (topic == "camera_status") {
-        int cameraId = msg.value("cameraId", -1);
-        if (cameraId >= 0) {
-            subs.cameraStatus.insert(cameraId);
-            spdlog::debug("VisionWebSocket: Client subscribed to camera_status for camera {}", cameraId);
+        } else if (topic == "camera_status") {
+            int cameraId = msg.value("cameraId", -1);
+            if (cameraId >= 0) {
+                subs.cameraStatus.insert(cameraId);
+                spdlog::debug("VisionWebSocket: Client subscribed to camera_status for camera {}", cameraId);
+
+                // Prepare current camera status for immediate send
+                auto [connected, streaming] = ThreadManager::instance().getCameraStatus(cameraId);
+                response = {
+                    {"type", "camera_status"},
+                    {"cameraId", cameraId},
+                    {"data", {
+                        {"camera_id", cameraId},
+                        {"connected", connected},
+                        {"streaming", streaming}
+                    }}
+                };
+                shouldSend = true;
+            }
+
+        } else if (topic == "pipeline_results") {
+            int cameraId = msg.value("cameraId", -1);
+            int pipelineId = msg.value("pipelineId", -1);
+            if (cameraId >= 0 && pipelineId >= 0) {
+                subs.pipelineResults.insert({cameraId, pipelineId});
+                spdlog::debug("VisionWebSocket: Client subscribed to pipeline_results for camera {} pipeline {}",
+                              cameraId, pipelineId);
+
+                // Prepare subscription acknowledgement
+                response = {
+                    {"type", "subscribed"},
+                    {"topic", "pipeline_results"},
+                    {"cameraId", cameraId},
+                    {"pipelineId", pipelineId}
+                };
+                shouldSend = true;
+            }
         }
+    } // Lock released here
 
-    } else if (topic == "pipeline_results") {
-        int cameraId = msg.value("cameraId", -1);
-        int pipelineId = msg.value("pipelineId", -1);
-        if (cameraId >= 0 && pipelineId >= 0) {
-            subs.pipelineResults.insert({cameraId, pipelineId});
-            spdlog::debug("VisionWebSocket: Client subscribed to pipeline_results for camera {} pipeline {}",
-                          cameraId, pipelineId);
-        }
+    // Send response outside the lock to avoid potential deadlocks
+    if (shouldSend && conn->connected()) {
+        conn->send(response.dump());
     }
 }
 
@@ -285,10 +331,14 @@ void VisionWebSocket::metricsBroadcastLoop() {
 
         if (!metricsRunning_.load()) break;
 
-        // Only broadcast if there are subscribers
-        if (hasMetricsSubscribers()) {
-            auto summary = MetricsRegistry::instance().getSummary();
-            broadcastMetrics(summary.toJson());
+        try {
+            // Only broadcast if there are subscribers
+            if (hasMetricsSubscribers()) {
+                auto summary = MetricsRegistry::instance().getSummary();
+                broadcastMetrics(summary.toJson());
+            }
+        } catch (const std::exception& e) {
+            spdlog::error("VisionWebSocket: Metrics broadcast error: {}", e.what());
         }
     }
 }

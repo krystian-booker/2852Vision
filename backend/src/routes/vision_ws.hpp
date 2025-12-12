@@ -64,8 +64,8 @@ private:
     // Metrics broadcast thread
     void metricsBroadcastLoop();
 
-    mutable std::mutex clientsMutex_;
-    std::map<drogon::WebSocketConnectionPtr, ClientSubscriptions> clients_;
+    static std::mutex clientsMutex_;
+    static std::map<drogon::WebSocketConnectionPtr, ClientSubscriptions> clients_;
 
     // Metrics broadcast thread
     std::thread metricsThread_;

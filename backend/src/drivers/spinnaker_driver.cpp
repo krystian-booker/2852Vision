@@ -411,6 +411,7 @@ FrameResult SpinnakerDriver::getFrame() {
 
     } catch (Spinnaker::Exception& e) {
         spdlog::warn("Spinnaker getFrame error: {}", e.what());
+        disconnect();  // Mark as disconnected so CameraThread can attempt reconnection
     }
 
     return result;

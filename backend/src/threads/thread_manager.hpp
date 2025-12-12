@@ -58,6 +58,8 @@ public:
     bool start();
     void stop();
     bool isRunning() const { return running_.load(); }
+    bool isConnected() const { return connected_.load(); }
+    bool isStreaming() const { return streaming_.load(); }
 
     // Register a vision thread's queue
     void registerQueue(int pipelineId, std::shared_ptr<FrameQueue> queue);
@@ -92,6 +94,8 @@ private:
     mutable std::mutex settingsMutex_; // Protects camera_ access
     std::unique_ptr<BaseDriver> driver_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> connected_{false};
+    std::atomic<bool> streaming_{false};
     std::thread thread_;
 
     // Subscribed vision threads
@@ -167,6 +171,7 @@ public:
     bool startCamera(const Camera& camera);
     void stopCamera(int cameraId);
     bool isCameraRunning(int cameraId);
+    std::pair<bool, bool> getCameraStatus(int cameraId); // returns {connected, streaming}
 
     // Restart camera with new settings (if running)
     void restartCamera(const Camera& newCamera);

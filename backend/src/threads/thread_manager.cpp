@@ -98,6 +98,8 @@ void CameraThread::stop() {
         thread_.join();
     }
 
+    connected_.store(false);
+    streaming_.store(false);
     driver_->disconnect();
     spdlog::info("Camera thread stopped for camera {}", camera_.id);
 }
@@ -178,8 +180,14 @@ void CameraThread::run() {
     static constexpr int LOG_INTERVAL = 100;  // Log every 100 frames
 
     bool connectionErrorLogged = false;
-    bool wasConnected = false;
+    bool wasConnected = driver_->isConnected();
     bool wasStreaming = false;
+
+    // If already connected from initial connect in start(), update status immediately
+    if (wasConnected) {
+        connected_.store(true);
+        VisionWebSocket::instance().broadcastCameraStatus(cameraId, true, false);
+    }
 
     while (running_.load()) {
         // Try to connect if not connected
@@ -188,6 +196,9 @@ void CameraThread::run() {
              if (wasConnected) {
                  wasConnected = false;
                  wasStreaming = false;
+                 connected_.store(false);
+                 streaming_.store(false);
+                 spdlog::info("Camera {} disconnected, broadcasting status", cameraId);
                  VisionWebSocket::instance().broadcastCameraStatus(cameraId, false, false);
              }
 
@@ -195,6 +206,7 @@ void CameraThread::run() {
                  spdlog::info("Connected to camera {}", cameraId);
                  connectionErrorLogged = false;
                  wasConnected = true;
+                 connected_.store(true);
                  VisionWebSocket::instance().broadcastCameraStatus(cameraId, true, false);
 
                  // Apply initial settings
@@ -274,6 +286,7 @@ void CameraThread::run() {
             // Notify that camera is now streaming
             if (!wasStreaming) {
                 wasStreaming = true;
+                streaming_.store(true);
                 VisionWebSocket::instance().broadcastCameraStatus(cameraId, true, true);
             }
         }
@@ -600,6 +613,15 @@ bool ThreadManager::isCameraRunning(int cameraId) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = cameraThreads_.find(cameraId);
     return it != cameraThreads_.end() && it->second->isRunning();
+}
+
+std::pair<bool, bool> ThreadManager::getCameraStatus(int cameraId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = cameraThreads_.find(cameraId);
+    if (it != cameraThreads_.end() && it->second->isRunning()) {
+        return {it->second->isConnected(), it->second->isStreaming()};
+    }
+    return {false, false};
 }
 
 void ThreadManager::executeWithCameraPaused(int cameraId, std::function<void()> action) {

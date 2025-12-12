@@ -191,8 +191,8 @@ FrameResult RealSenseDriver::getFrame() {
     }
 
     try {
-        // Wait for frames with timeout
-        rs2::frameset frames = pipeline_.wait_for_frames(5000);
+        // Wait for frames with timeout (reduced to 2000ms for faster disconnect detection)
+        rs2::frameset frames = pipeline_.wait_for_frames(2000);
 
         // Align depth to color if depth is enabled
         if (camera_.depth_enabled) {
@@ -219,7 +219,14 @@ FrameResult RealSenseDriver::getFrame() {
             }
         }
     } catch (const rs2::error& e) {
-        spdlog::warn("RealSense frame error: {}", e.what());
+        spdlog::warn("RealSense frame error (rs2): {}", e.what());
+        disconnect(); // Ensure pipeline is stopped and connected status updated
+    } catch (const std::exception& e) {
+        spdlog::warn("RealSense frame error (std): {}", e.what());
+        disconnect();
+    } catch (...) {
+        spdlog::warn("RealSense frame error (unknown)");
+        disconnect();
     }
 
     return result;
