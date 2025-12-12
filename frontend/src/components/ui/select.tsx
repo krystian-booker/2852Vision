@@ -13,6 +13,8 @@ interface SelectContextValue {
   open: boolean
   setOpen: (open: boolean) => void
   onValueChange?: (value: string) => void
+  labels: Map<string, React.ReactNode>
+  registerLabel: (value: string, label: React.ReactNode) => void
 }
 
 const SelectContext = React.createContext<SelectContextValue | null>(null)
@@ -36,6 +38,7 @@ interface SelectProps {
 const Select = ({ value: controlledValue, defaultValue, onValueChange, disabled, children }: SelectProps) => {
   const [uncontrolledValue, setUncontrolledValue] = React.useState<string | undefined>(defaultValue)
   const [open, setOpen] = React.useState(false)
+  const [labels, setLabels] = React.useState<Map<string, React.ReactNode>>(() => new Map())
 
   const value = controlledValue !== undefined ? controlledValue : uncontrolledValue
 
@@ -49,6 +52,15 @@ const Select = ({ value: controlledValue, defaultValue, onValueChange, disabled,
     [controlledValue, onValueChange]
   )
 
+  const registerLabel = React.useCallback((itemValue: string, label: React.ReactNode) => {
+    setLabels((prev) => {
+      if (prev.get(itemValue) === label) return prev
+      const next = new Map(prev)
+      next.set(itemValue, label)
+      return next
+    })
+  }, [])
+
   const contextValue = React.useMemo(
     () => ({
       value,
@@ -56,8 +68,10 @@ const Select = ({ value: controlledValue, defaultValue, onValueChange, disabled,
       open,
       setOpen,
       onValueChange: handleValueChange,
+      labels,
+      registerLabel,
     }),
-    [value, disabled, open, handleValueChange]
+    [value, disabled, open, handleValueChange, labels, registerLabel]
   )
 
   return (
@@ -75,9 +89,9 @@ interface SelectValueProps extends React.HTMLAttributes<HTMLSpanElement> {
 
 const SelectValue = React.forwardRef<HTMLSpanElement, SelectValueProps>(
   ({ className, placeholder, children, ...props }, ref) => {
-    const { value } = useSelectContext('SelectValue')
+    const { value, labels } = useSelectContext('SelectValue')
 
-    const display = children ?? (value ?? placeholder ?? '')
+    const display = children ?? (value ? labels.get(value) : null) ?? placeholder ?? ''
 
     return (
       <span
@@ -135,20 +149,24 @@ const SelectContent = React.forwardRef<HTMLDivElement, SelectContentProps>(
   ({ className, children, position: _position, ...props }, ref) => {
     const { open } = useSelectContext('SelectContent')
 
-    if (!open) return null
-
     return (
-      <div
-        ref={ref}
-        className={cn(
-          'absolute z-50 mt-1 max-h-96 min-w-[8rem] w-full overflow-auto rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--glass-bg-heavy)] backdrop-blur-xl text-[var(--color-text)] shadow-md',
-          className
+      <>
+        {/* Hidden container to register labels even when closed */}
+        {!open && <div className="hidden">{children}</div>}
+        {open && (
+          <div
+            ref={ref}
+            className={cn(
+              'absolute z-50 mt-1 max-h-96 min-w-[8rem] w-full overflow-auto rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--glass-bg-heavy)] backdrop-blur-xl text-[var(--color-text)] shadow-md',
+              className
+            )}
+            role="listbox"
+            {...props}
+          >
+            {children}
+          </div>
         )}
-        role="listbox"
-        {...props}
-      >
-        {children}
-      </div>
+      </>
     )
   }
 )
@@ -167,9 +185,13 @@ interface SelectItemProps extends React.HTMLAttributes<HTMLDivElement> {
 
 const SelectItem = React.forwardRef<HTMLDivElement, SelectItemProps>(
   ({ className, children, value, onClick, ...props }, ref) => {
-    const { value: selectedValue, onValueChange, setOpen, disabled } = useSelectContext('SelectItem')
+    const { value: selectedValue, onValueChange, setOpen, disabled, registerLabel } = useSelectContext('SelectItem')
 
     const isSelected = selectedValue === value
+
+    React.useEffect(() => {
+      registerLabel(value, children)
+    }, [registerLabel, value, children])
 
     const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
       if (disabled) {
